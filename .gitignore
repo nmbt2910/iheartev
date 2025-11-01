@@ -1,0 +1,47 @@
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Backend
+backend/target/
+backend/.mvn/
+backend/mvnw
+backend/mvnw.cmd
+
+# Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/dist/
+mobile/web-build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Logs
+*.log
+logs/
+
+# Build
+*.class
+*.jar
+*.war
+*.ear
+
+# Database
+*.db
+*.sqlite
+
