@@ -1,5 +1,8 @@
 package com.iheartev.api.listing;
 
+import com.iheartev.api.payment.PaymentInfo;
+import com.iheartev.api.payment.PaymentInfoRepository;
+import com.iheartev.api.transaction.OrderRepository;
 import com.iheartev.api.user.User;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -11,14 +14,21 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/listings")
 public class ListingController {
     private final ListingRepository repository;
+    private final PaymentInfoRepository paymentInfoRepository;
+    private final OrderRepository orderRepository;
 
-    public ListingController(ListingRepository repository) {
+    public ListingController(ListingRepository repository, PaymentInfoRepository paymentInfoRepository,
+                            OrderRepository orderRepository) {
         this.repository = repository;
+        this.paymentInfoRepository = paymentInfoRepository;
+        this.orderRepository = orderRepository;
     }
 
     @GetMapping
@@ -32,8 +42,16 @@ public class ListingController {
             @RequestParam Optional<Double> minPrice,
             @RequestParam Optional<Double> maxPrice,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
+            @RequestParam(defaultValue = "20") int size,
+            @AuthenticationPrincipal User user
     ) {
+        // Get all listing IDs with active orders
+        Set<Long> listingsWithActiveOrders = orderRepository.findAll().stream()
+                .filter(o -> !"CANCELLED".equals(o.getStatus()) && !"CLOSED".equals(o.getStatus()))
+                .map(o -> o.getListing().getId())
+                .collect(Collectors.toSet());
+        
+        final Set<Long> excludedListings = listingsWithActiveOrders;
         Specification<Listing> spec = null; // Start with no filter to return all by default
         // Only filter by status if explicitly provided
         if (status.isPresent()) {
@@ -67,6 +85,15 @@ public class ListingController {
             spec = (spec == null) ? Specification.where((r, q, cb) -> cb.lessThanOrEqualTo(r.get("price"), maxPrice.get()))
                                   : spec.and((r, q, cb) -> cb.lessThanOrEqualTo(r.get("price"), maxPrice.get()));
         }
+        
+        // Exclude listings with active orders unless status is explicitly filtered
+        if (!status.isPresent() && !excludedListings.isEmpty()) {
+            spec = (spec == null) ? Specification.where((r, q, cb) -> 
+                    cb.not(r.get("id").in(excludedListings)))
+                : spec.and((r, q, cb) -> 
+                    cb.not(r.get("id").in(excludedListings)));
+        }
+        
         return repository.findAll(spec, PageRequest.of(page, size));
     }
 
@@ -76,12 +103,30 @@ public class ListingController {
     }
 
     @PostMapping
-    public Listing create(@AuthenticationPrincipal User seller, @Valid @RequestBody Listing listing) {
+    public ResponseEntity<?> create(@AuthenticationPrincipal User seller, @Valid @RequestBody Listing listing) {
+        // Validate payment info if provided
+        if (listing.getPaymentInfo() != null) {
+            PaymentInfo paymentInfo = listing.getPaymentInfo();
+            if ("VIETQR".equals(paymentInfo.getPaymentMethod())) {
+                if (paymentInfo.getBankCode() == null || paymentInfo.getBankName() == null ||
+                    paymentInfo.getAccountNumber() == null || paymentInfo.getAmount() == null ||
+                    paymentInfo.getTransactionContent() == null) {
+                    return ResponseEntity.badRequest().body(java.util.Map.of("error", 
+                        "All VietQR payment fields are required: bankCode, bankName, accountNumber, amount, transactionContent"));
+                }
+            }
+            // Save payment info separately first
+            paymentInfo.setId(null);
+            PaymentInfo savedPaymentInfo = paymentInfoRepository.save(paymentInfo);
+            listing.setPaymentInfo(savedPaymentInfo);
+        }
+        
         listing.setId(null);
         listing.setSeller(seller);
         listing.setStatus("ACTIVE");
         listing.setCreatedAt(Instant.now());
-        return repository.save(listing);
+        Listing saved = repository.save(listing);
+        return ResponseEntity.ok(saved);
     }
 
     @PutMapping("/{id}")

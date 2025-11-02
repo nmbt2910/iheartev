@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
@@ -14,6 +14,7 @@ export default function RegisterScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const { save } = useAuth();
 
@@ -49,20 +50,42 @@ export default function RegisterScreen({ navigation }) {
     }
   };
 
+  // Keyboard listener to adjust padding when keyboard opens/closes
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+
+    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
+  }, []);
+
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <View style={styles.safeAreaWrapper}>
+      <SafeAreaView style={styles.safeAreaTop} edges={['top']}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
         <View style={styles.appbarHeader}>
           <View style={{ width: 40 }} />
           <Text style={styles.appbarContent}>Đăng ký</Text>
           <View style={{ width: 40 }} />
         </View>
+      </SafeAreaView>
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior="padding"
+        >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 20 }
+        ]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content}>
@@ -166,13 +189,127 @@ export default function RegisterScreen({ navigation }) {
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+      ) : (
+        <View style={styles.container}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 20 }
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.content}>
+              <View style={styles.headerSection}>
+                <Icon name="account-plus" size={64} color="#6200ee" />
+                <Text style={styles.welcomeTitle}>Tạo tài khoản mới</Text>
+                <Text style={styles.welcomeSubtitle}>Tham gia cùng chúng tôi ngay hôm nay</Text>
+              </View>
+
+              <View style={styles.formContainer}>
+                <View style={styles.inputContainer}>
+                  <Icon name="account-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Họ và tên"
+                    placeholderTextColor="#999"
+                    value={fullName}
+                    onChangeText={(text) => { setFullName(text); setError(''); }}
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Icon name="email-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Email"
+                    placeholderTextColor="#999"
+                    value={email}
+                    onChangeText={(text) => { setEmail(text); setError(''); }}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Icon name="phone-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Số điện thoại"
+                    placeholderTextColor="#999"
+                    value={phone}
+                    onChangeText={(text) => { setPhone(text); setError(''); }}
+                    keyboardType="phone-pad"
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Icon name="lock-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Mật khẩu"
+                    placeholderTextColor="#999"
+                    value={password}
+                    onChangeText={(text) => { setPassword(text); setError(''); }}
+                    secureTextEntry={!showPassword}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.passwordToggle}
+                  >
+                    <Icon
+                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color="#666"
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {!!error && (
+                  <View style={styles.errorContainer}>
+                    <Icon name="alert-circle" size={18} color="#d32f2f" />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  onPress={submit}
+                  style={[styles.registerButton, loading && styles.registerButtonDisabled]}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  {loading ? (
+                    <Text style={styles.registerButtonText}>Đang đăng ký...</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.registerButtonText}>Đăng ký</Text>
+                      <Icon name="arrow-right" size={20} color="white" style={{ marginLeft: 8 }} />
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => navigation.replace('Login')}
+                  style={styles.loginLink}
+                >
+                  <Text style={styles.loginLinkText}>
+                    Đã có tài khoản? <Text style={styles.loginLinkBold}>Đăng nhập</Text>
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  safeAreaWrapper: {
     flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  safeAreaTop: {
     backgroundColor: '#6200ee',
   },
   container: {
@@ -204,7 +341,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   scrollContent: {
-    flexGrow: 1,
+    paddingBottom: 20,
   },
   content: {
     flex: 1,

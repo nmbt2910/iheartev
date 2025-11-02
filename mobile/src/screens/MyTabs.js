@@ -11,6 +11,7 @@ import { favoriteService } from '../services/favoriteService';
 import { useFavorites } from '../store/favorites';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
+import { formatVND } from '../utils/currencyFormatter';
 
 const Tab = createBottomTabNavigator();
 
@@ -35,6 +36,7 @@ function ScreenWrapper({ title, children, navigation }) {
 function MyListings({ navigation }) {
   const { isAuthenticated } = useAuth();
   const [items, setItems] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -43,8 +45,12 @@ function MyListings({ navigation }) {
   const loadData = async () => {
     if (!isAuthenticated) return;
     try {
-      const res = await listingService.getMyListings();
-      setItems(Array.isArray(res) ? res : []);
+      const [listingsRes, ordersRes] = await Promise.all([
+        listingService.getMyListings(),
+        orderService.getMyOrders()
+      ]);
+      setItems(Array.isArray(listingsRes) ? listingsRes : []);
+      setOrders(Array.isArray(ordersRes) ? ordersRes : []);
     } catch (error) {
       if (error.sessionExpired) {
         Alert.alert('Session Expired', 'Session expired. Please log in again.', [
@@ -56,6 +62,12 @@ function MyListings({ navigation }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getOrderForListing = (listingId) => {
+    return orders.find(o => o.listing?.id === listingId && 
+                     o.status !== 'CANCELLED' && 
+                     o.status !== 'CLOSED');
   };
 
   useEffect(() => {
@@ -83,30 +95,55 @@ function MyListings({ navigation }) {
             <Text style={styles.emptyText}>Chưa có tin đăng nào</Text>
           </View>
         ) : (
-          items.map(it => (
-            <TouchableOpacity
-              key={it.id}
-              style={styles.card}
-              activeOpacity={0.7}
-            >
-              <View style={styles.cardIconContainer}>
-                <Icon name="car" size={24} color="#6200ee" />
-              </View>
-              <View style={styles.cardContent}>
-                <Text style={styles.cardTitle}>{`${it.brand} ${it.model}`}</Text>
-                <View style={styles.cardMeta}>
-                  <View style={styles.metaItem}>
-                    <Icon name="calendar" size={14} color="#666" />
-                    <Text style={styles.metaText}>{it.year}</Text>
-                  </View>
-                  <View style={styles.statusBadge}>
-                    <Text style={styles.statusText}>{it.status}</Text>
-                  </View>
+          items.map(it => {
+            const order = getOrderForListing(it.id);
+            return (
+              <TouchableOpacity
+                key={it.id}
+                style={styles.card}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (order) {
+                    navigation.navigate('OrderDetail', { orderId: order.id });
+                  } else {
+                    navigation.navigate('ListingDetail', { id: it.id });
+                  }
+                }}
+              >
+                <View style={styles.cardIconContainer}>
+                  <Icon name="car" size={24} color="#6200ee" />
                 </View>
-              </View>
-              <Icon name="chevron-right" size={20} color="#ccc" />
-            </TouchableOpacity>
-          ))
+                <View style={styles.cardContent}>
+                  <Text style={styles.cardTitle}>{`${it.brand} ${it.model}`}</Text>
+                  <View style={styles.cardMeta}>
+                    <View style={styles.metaItem}>
+                      <Icon name="calendar" size={14} color="#666" />
+                      <Text style={styles.metaText}>{it.year}</Text>
+                    </View>
+                    <View style={[
+                      styles.statusBadge,
+                      order && styles.statusBadgeOrder
+                    ]}>
+                      <Text style={styles.statusText}>
+                        {order ? `Có đơn hàng (${order.status})` : it.status}
+                      </Text>
+                    </View>
+                  </View>
+                  {order && (
+                    <TouchableOpacity
+                      style={styles.orderInfo}
+                      onPress={() => navigation.navigate('OrderDetail', { orderId: order.id })}
+                      activeOpacity={0.7}
+                    >
+                      <Icon name="shopping" size={16} color="#ff9800" />
+                      <Text style={styles.orderInfoText}>Xem đơn hàng</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Icon name="chevron-right" size={20} color="#ccc" />
+              </TouchableOpacity>
+            );
+          })
         )}
       </ScrollView>
     </ScreenWrapper>
@@ -124,7 +161,7 @@ function MyOrders({ navigation }) {
     if (!isAuthenticated) return;
     try {
       const res = await orderService.getMyOrders();
-      setItems(res || []);
+      setItems(Array.isArray(res) ? res : []);
     } catch (error) {
       if (error.sessionExpired) {
         Alert.alert('Session Expired', 'Session expired. Please log in again.', [
@@ -149,13 +186,14 @@ function MyOrders({ navigation }) {
   };
 
   const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'completed':
-      case 'delivered':
+    switch (status?.toUpperCase()) {
+      case 'CLOSED':
         return '#4caf50';
-      case 'pending':
+      case 'PENDING':
         return '#ff9800';
-      case 'cancelled':
+      case 'PAID':
+        return '#2196f3';
+      case 'CANCELLED':
         return '#f44336';
       default:
         return '#666';
@@ -180,6 +218,7 @@ function MyOrders({ navigation }) {
               key={it.id}
               style={styles.card}
               activeOpacity={0.7}
+              onPress={() => navigation.navigate('OrderDetail', { orderId: it.id })}
             >
               <View style={styles.cardIconContainer}>
                 <Icon name="shopping" size={24} color="#6200ee" />
@@ -189,10 +228,14 @@ function MyOrders({ navigation }) {
                   {it.listing?.brand} {it.listing?.model || 'N/A'}
                 </Text>
                 <View style={styles.cardMeta}>
-                  <Text style={styles.priceText}>${it.amount?.toLocaleString() || '0'}</Text>
+                  <Text style={styles.priceText}>{formatVND(it.amount || 0)}</Text>
                   <View style={[styles.statusBadge, { backgroundColor: getStatusColor(it.status) + '20' }]}>
                     <Text style={[styles.statusText, { color: getStatusColor(it.status) }]}>
-                      {it.status || 'N/A'}
+                      {it.status === 'CLOSED' ? 'Hoàn thành' :
+                       it.status === 'CANCELLED' ? 'Đã hủy' :
+                       it.status === 'PAID' ? 'Đã thanh toán' :
+                       it.status === 'PENDING' ? 'Chờ xử lý' :
+                       it.status || 'N/A'}
                     </Text>
                   </View>
                 </View>
@@ -287,7 +330,7 @@ function MyFavorites({ navigation }) {
                   {it.listing?.brand} {it.listing?.model || 'N/A'}
                 </Text>
                 <Text style={styles.cardSubtitle}>
-                  {it.listing?.year} • ${it.listing?.price?.toLocaleString() || 'N/A'}
+                  {it.listing?.year} • {it.listing?.price ? formatVND(it.listing.price) : 'N/A'}
                 </Text>
               </View>
               <Icon name="chevron-right" size={20} color="#ccc" />
@@ -340,6 +383,29 @@ export default function MyTabs() {
           tabBarIcon: ({ color, size }) => <Icon name="heart" size={size} color={color} />,
         }}
       />
+      <Tab.Screen
+        name="Profile"
+        options={{
+          title: 'Hồ sơ',
+          tabBarIcon: ({ color, size }) => <Icon name="account" size={size} color={color} />,
+        }}
+      >
+        {({ navigation }) => (
+          <ScreenWrapper title="Hồ sơ" navigation={navigation}>
+            <View style={styles.profileTabContainer}>
+              <TouchableOpacity
+                style={styles.profileButton}
+                onPress={() => navigation.navigate('Profile')}
+                activeOpacity={0.7}
+              >
+                <Icon name="account-circle" size={48} color="#6200ee" />
+                <Text style={styles.profileButtonText}>Xem hồ sơ của tôi</Text>
+                <Icon name="chevron-right" size={24} color="#999" />
+              </TouchableOpacity>
+            </View>
+          </ScreenWrapper>
+        )}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }
@@ -466,9 +532,56 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#e3f2fd',
   },
+  statusBadgeOrder: {
+    backgroundColor: '#fff3e0',
+  },
+  orderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#fff3e0',
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    gap: 6,
+  },
+  orderInfoText: {
+    fontSize: 12,
+    color: '#ff9800',
+    fontWeight: '600',
+  },
   statusText: {
     fontSize: 12,
     fontWeight: '600',
     color: '#1976d2',
+  },
+  profileTabContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  profileButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    gap: 16,
+    elevation: 0,
+    shadowColor: '#6200ee',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  profileButtonText: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
   },
 });

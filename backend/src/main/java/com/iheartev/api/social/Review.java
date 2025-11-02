@@ -18,7 +18,14 @@ public class Review {
     private int rating; // 1..5
     @Column(length = 1000)
     private String comment;
+    @Column(name = "created_at")
     private Instant createdAt;
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+    @Column(name = "edit_count")
+    private Integer editCount = 0; // Track number of edits
+    @Column(name = "order_id")
+    private Long orderId; // Reference to the order this review is for
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -32,6 +39,12 @@ public class Review {
     public void setComment(String comment) { this.comment = comment; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public Integer getEditCount() { return editCount != null ? editCount : 0; }
+    public void setEditCount(Integer editCount) { this.editCount = editCount != null ? editCount : 0; }
+    public Long getOrderId() { return orderId; }
+    public void setOrderId(Long orderId) { this.orderId = orderId; }
 }
 
 

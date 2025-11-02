@@ -7,8 +7,11 @@ import { useAuth } from '../store/auth';
 import { listingService } from '../services/listingService';
 import { orderService } from '../services/orderService';
 import { aiService } from '../services/aiService';
+import { attachmentService } from '../services/attachmentService';
 import { useFavorites } from '../store/favorites';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
+import { formatVND } from '../utils/currencyFormatter';
+import { Image } from 'react-native';
 
 export default function ListingDetailScreen({ route, navigation }) {
   const { id } = route.params;
@@ -19,6 +22,8 @@ export default function ListingDetailScreen({ route, navigation }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState(null);
   const [aiExpanded, setAiExpanded] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [hasActiveOrder, setHasActiveOrder] = useState(false);
   const { token, isAuthenticated } = useAuth();
   const favorites = useFavorites((state) => state.favorites);
   const { checkFavorite, toggleFavorite } = useFavorites();
@@ -135,8 +140,32 @@ export default function ListingDetailScreen({ route, navigation }) {
       try {
         const listing = await listingService.getListingById(id);
         setItem(listing);
-        // Auto-load AI overview when listing loads
+        
+        // Load attachments
         if (listing) {
+          try {
+            const atts = await attachmentService.getAttachmentsByListing(id);
+            setAttachments(Array.isArray(atts) ? atts : []);
+          } catch (error) {
+            console.error('Error loading attachments:', error);
+          }
+          
+          // Check for active orders
+          if (isAuthenticated) {
+            try {
+              const orders = await orderService.getMyOrders();
+              const activeOrder = orders.find(o => 
+                o.listing?.id === id && 
+                o.status !== 'CANCELLED' && 
+                o.status !== 'CLOSED'
+              );
+              setHasActiveOrder(!!activeOrder);
+            } catch (error) {
+              console.error('Error checking orders:', error);
+            }
+          }
+          
+          // Auto-load AI overview when listing loads
           loadAIOverview();
         }
       } catch (error) {
@@ -150,7 +179,7 @@ export default function ListingDetailScreen({ route, navigation }) {
         }
       }
     })();
-  }, [id]);
+  }, [id, isAuthenticated]);
 
   // Check favorite status when screen comes into focus
   useFocusEffect(
@@ -174,11 +203,18 @@ export default function ListingDetailScreen({ route, navigation }) {
       ]);
       return;
     }
+    
+    if (hasActiveOrder) {
+      Alert.alert('Thông báo', 'Xe này đã có đơn hàng. Không thể mua được.');
+      return;
+    }
+    
     setLoading(true);
     try {
-      await orderService.buyNow(id);
+      const order = await orderService.buyNow(id);
       Alert.alert('Thành công', 'Đơn hàng đã được tạo!', [
-        { text: 'OK', onPress: () => navigation.goBack() }
+        { text: 'Xem đơn hàng', onPress: () => navigation.navigate('OrderDetail', { orderId: order.id }) },
+        { text: 'OK', style: 'cancel', onPress: () => navigation.goBack() }
       ]);
     } catch (error) {
       if (error.sessionExpired) {
@@ -269,9 +305,41 @@ export default function ListingDetailScreen({ route, navigation }) {
           </View>
           <View style={styles.priceHighlight}>
             <Text style={styles.priceHighlightLabel}>Giá bán</Text>
-            <Text style={styles.priceHighlightValue}>${item.price.toLocaleString()}</Text>
+            <Text style={styles.priceHighlightValue}>{formatVND(item.price)}</Text>
           </View>
         </View>
+
+        {/* Attachments Gallery */}
+        {attachments.length > 0 && (
+          <View style={styles.attachmentsCard}>
+            <View style={styles.sectionHeader}>
+              <Icon name="image" size={20} color="#6200ee" />
+              <Text style={styles.sectionTitle}>Ảnh/Video</Text>
+            </View>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              style={styles.attachmentsScroll}
+              contentContainerStyle={styles.attachmentsContainer}
+            >
+              {attachments.map((attachment) => (
+                <View key={attachment.id} style={styles.attachmentItem}>
+                  {attachment.type === 'IMAGE' ? (
+                    <Image 
+                      source={{ uri: attachmentService.getAttachmentUrl(attachment.id) }}
+                      style={styles.attachmentImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={[styles.attachmentImage, styles.attachmentVideo]}>
+                      <Icon name="play-circle" size={48} color="#6200ee" />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* AI Overview Section - Main Feature */}
         <View style={styles.aiMainCard}>
@@ -421,6 +489,79 @@ export default function ListingDetailScreen({ route, navigation }) {
           </View>
         </View>
 
+        {/* Seller Info */}
+        {item.seller && (
+          <View style={styles.descriptionCard}>
+            <View style={styles.sectionHeader}>
+              <Icon name="account-circle" size={20} color="#6200ee" />
+              <Text style={styles.sectionTitle}>Người bán</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('SellerProfile', { sellerId: item.seller.id })}
+              activeOpacity={0.7}
+              style={styles.sellerInfoRow}
+            >
+              <View style={styles.sellerAvatarContainer}>
+                <Icon name="account-circle" size={40} color="#6200ee" />
+              </View>
+              <View style={styles.sellerInfoContent}>
+                <Text style={styles.sellerName}>{item.seller.fullName}</Text>
+                <Text style={styles.sellerEmail}>{item.seller.email}</Text>
+                {item.seller.phone && (
+                  <Text style={styles.sellerPhone}>{item.seller.phone}</Text>
+                )}
+              </View>
+              <Icon name="chevron-right" size={20} color="#999" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Payment Info */}
+        {item.paymentInfo && (
+          <View style={styles.descriptionCard}>
+            <View style={styles.sectionHeader}>
+              <Icon name="credit-card" size={20} color="#6200ee" />
+              <Text style={styles.sectionTitle}>Phương thức thanh toán</Text>
+            </View>
+            {item.paymentInfo.paymentMethod === 'CASH' ? (
+              <View style={styles.paymentInfoBox}>
+                <Icon name="cash" size={32} color="#4caf50" />
+                <Text style={styles.paymentMethodText}>Thanh toán tiền mặt khi nhận hàng</Text>
+              </View>
+            ) : (
+              <View style={styles.paymentInfoBox}>
+                <Icon name="qrcode" size={32} color="#6200ee" />
+                <Text style={styles.paymentMethodText}>Chuyển khoản VietQR</Text>
+                <View style={styles.vietqrDetails}>
+                  <View style={styles.paymentInfoRow}>
+                    <Text style={styles.paymentInfoLabel}>Ngân hàng:</Text>
+                    <Text style={styles.paymentInfoValue}>{item.paymentInfo.bankName}</Text>
+                  </View>
+                  <View style={styles.paymentInfoRow}>
+                    <Text style={styles.paymentInfoLabel}>Số tài khoản:</Text>
+                    <Text style={styles.paymentInfoValue}>{item.paymentInfo.accountNumber}</Text>
+                  </View>
+                  <View style={styles.paymentInfoRow}>
+                    <Text style={styles.paymentInfoLabel}>Số tiền:</Text>
+                    <Text style={styles.paymentInfoValue}>{formatVND(item.paymentInfo.amount)}</Text>
+                  </View>
+                  <View style={styles.paymentInfoRow}>
+                    <Text style={styles.paymentInfoLabel}>Nội dung:</Text>
+                    <Text style={styles.paymentInfoValue}>{item.paymentInfo.transactionContent}</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+            <View style={styles.warningBox}>
+              <Icon name="alert" size={20} color="#ff9800" />
+              <Text style={styles.warningText}>
+                ⚠️ CẢNH BÁO: Chỉ thực hiện thanh toán sau khi đã gặp mặt người bán và kiểm tra xe trực tiếp. 
+                Không chuyển khoản trước khi nhận hàng để tránh lừa đảo.
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Description Section */}
         {item.description && (
           <View style={styles.descriptionCard}>
@@ -449,17 +590,19 @@ export default function ListingDetailScreen({ route, navigation }) {
           </View>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={handleBuyNow}
-          disabled={loading}
-          style={[styles.primaryButton, loading && styles.buttonDisabled]}
-          activeOpacity={0.8}
-        >
-          <Icon name="shopping" size={22} color="white" />
-          <Text style={styles.primaryButtonText}>
-            {loading ? 'Đang xử lý...' : 'Mua ngay'}
-          </Text>
-        </TouchableOpacity>
+        {(!hasActiveOrder || isFavorite(id)) && (
+          <TouchableOpacity
+            onPress={handleBuyNow}
+            disabled={loading || hasActiveOrder}
+            style={[styles.primaryButton, (loading || hasActiveOrder) && styles.buttonDisabled]}
+            activeOpacity={0.8}
+          >
+            <Icon name="shopping" size={22} color="white" />
+            <Text style={styles.primaryButtonText}>
+              {loading ? 'Đang xử lý...' : hasActiveOrder ? 'Đã có đơn hàng' : 'Mua ngay'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
       </View>
     </SafeAreaView>
@@ -661,6 +804,123 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#2e7d32',
+  },
+  attachmentsCard: {
+    backgroundColor: 'white',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 18,
+    padding: 20,
+    elevation: 0,
+    shadowColor: '#6200ee',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+  },
+  attachmentsScroll: {
+    marginTop: 12,
+  },
+  attachmentsContainer: {
+    gap: 12,
+  },
+  attachmentItem: {
+    width: 200,
+    height: 200,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f0f0f0',
+  },
+  attachmentImage: {
+    width: '100%',
+    height: '100%',
+  },
+  attachmentVideo: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#e3f2fd',
+  },
+  sellerInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#f8f4ff',
+    borderRadius: 12,
+  },
+  sellerAvatarContainer: {
+    marginRight: 12,
+  },
+  sellerInfoContent: {
+    flex: 1,
+  },
+  sellerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  sellerEmail: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 2,
+  },
+  sellerPhone: {
+    fontSize: 14,
+    color: '#666',
+  },
+  paymentInfoBox: {
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#f8f4ff',
+    borderRadius: 12,
+    marginTop: 12,
+  },
+  paymentMethodText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6200ee',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  vietqrDetails: {
+    width: '100%',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    gap: 12,
+  },
+  paymentInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  paymentInfoLabel: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+    width: 120,
+  },
+  paymentInfoValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'right',
+  },
+  warningBox: {
+    flexDirection: 'row',
+    backgroundColor: '#fff3e0',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 16,
+    gap: 8,
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#e65100',
+    lineHeight: 18,
   },
   descriptionCard: {
     backgroundColor: 'white',

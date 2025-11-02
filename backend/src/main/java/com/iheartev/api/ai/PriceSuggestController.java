@@ -29,19 +29,58 @@ public class PriceSuggestController {
 
 
     @PostMapping(value = "/suggest-price", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> suggest(@RequestBody String featuresJson) throws Exception {
+    public ResponseEntity<String> suggest(@RequestBody String featuresJson) {
+        logger.info("=== AI PRICE SUGGESTION ENDPOINT CALLED ===");
+        logger.info("Request received at /api/ai/suggest-price");
+        
         if (geminiApiKey == null || geminiApiKey.isBlank()) {
+            logger.error("Gemini API key is not configured");
             return ResponseEntity.status(503).body("Gemini API key is not configured");
         }
-        String prompt = "Suggest a fair market price (in USD) for the following used EV/battery features as a single JSON {\"price\": number, \"reason\": string}. Features: " + featuresJson;
-        String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + geminiApiKey;
-        String body = "{\"contents\":[{\"parts\":[{\"text\": " + quote(prompt) + "}]}]}";
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-        HttpResponse<String> resp = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
-        return ResponseEntity.status(resp.statusCode()).body(resp.body());
+        
+        String prompt = "Bạn là chuyên gia định giá xe điện tại thị trường Việt Nam. Tháng hiện tại là tháng 11/2025. " +
+                "Hãy đề xuất giá bán phù hợp (bằng VNĐ) cho xe điện/bình pin đã qua sử dụng dựa trên thông tin sau. " +
+                "YÊU CẦU: (1) Trả lời NGẮN GỌN, chỉ thông tin quan trọng - tối đa 3 câu, (2) Chỉ tập trung vào thị trường Việt Nam, " +
+                "sử dụng giá VNĐ, (3) Nếu không tìm thấy thông tin xe hoặc lỗi, trả lời ngắn gọn: 'Không tìm thấy thông tin về xe này trên thị trường Việt Nam' hoặc 'Lỗi: [mô tả ngắn]'. " +
+                "Định dạng: 'Giá đề xuất: [số] VNĐ. [1-2 câu giải thích ngắn]' hoặc thông báo lỗi ngắn gọn nếu không có dữ liệu. " +
+                "Thông tin xe: " + featuresJson;
+        
+        try {
+            // Use the same Gemini model as overview endpoint for consistency
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=" + geminiApiKey;
+            String body = "{\"contents\":[{\"parts\":[{\"text\": " + quote(prompt) + "}]}]}";
+            logger.info("Calling Gemini API for price suggestion: {}", url.replace(geminiApiKey, "***"));
+            
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .timeout(java.time.Duration.ofSeconds(30))
+                    .build();
+            
+            HttpResponse<String> resp = HttpClient.newHttpClient().send(req, HttpResponse.BodyHandlers.ofString());
+            logger.info("Gemini API response status: {}", resp.statusCode());
+            
+            if (resp.statusCode() == 200) {
+                // Extract text from Gemini response (same as overview endpoint)
+                String responseBody = resp.body();
+                logger.debug("Gemini response body length: {}", responseBody.length());
+                String extractedText = extractTextFromResponse(responseBody);
+                if (extractedText != null && !extractedText.trim().isEmpty()) {
+                    logger.info("Successfully generated AI price suggestion");
+                    return ResponseEntity.ok(extractedText);
+                } else {
+                    logger.warn("Empty or null text extracted from Gemini response");
+                    return ResponseEntity.status(503).body("Không thể xử lý phản hồi từ AI. Vui lòng thử lại sau.");
+                }
+            } else {
+                logger.error("Gemini API returned status: {}, response: {}", resp.statusCode(), 
+                        resp.body() != null && resp.body().length() < 500 ? resp.body() : "response too long");
+                return ResponseEntity.status(resp.statusCode()).body("Không thể kết nối đến dịch vụ AI. Lỗi: " + resp.statusCode());
+            }
+        } catch (Exception e) {
+            logger.error("Error calling Gemini API: {}", e.getMessage(), e);
+            return ResponseEntity.status(503).body("Không thể kết nối đến dịch vụ AI. Vui lòng thử lại sau. Lỗi: " + e.getMessage());
+        }
     }
 
     @PostMapping(value = "/overview", consumes = MediaType.APPLICATION_JSON_VALUE)

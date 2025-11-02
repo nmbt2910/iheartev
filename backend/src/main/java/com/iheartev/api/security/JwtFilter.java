@@ -38,12 +38,14 @@ public class JwtFilter extends OncePerRequestFilter {
         logger.info("=== JWT FILTER - Request: {} {} ===", method, path);
         
         // Skip JWT validation for public endpoints
+        // Note: /api/auth/validate requires authentication, so it's NOT in this list
         boolean isPublicEndpoint = path.startsWith("/v3/api-docs") || 
             path.startsWith("/swagger-ui") || 
             path.startsWith("/swagger-resources") || 
             path.startsWith("/webjars") ||
             path.equals("/api/ai/overview") ||
-            path.startsWith("/api/auth/") ||
+            path.equals("/api/auth/login") ||
+            path.equals("/api/auth/register") ||
             (path.startsWith("/api/listings/") && "GET".equals(method));
         
         if (isPublicEndpoint) {

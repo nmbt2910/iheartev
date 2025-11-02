@@ -34,7 +34,8 @@ public class SecurityConfig {
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/ai/overview").permitAll()
-                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
+                .requestMatchers("/api/auth/validate").authenticated()
                 .requestMatchers(
                     "/v3/api-docs/**",
                     "/v3/api-docs",
@@ -47,6 +48,9 @@ public class SecurityConfig {
                 ).permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/listings/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/favorites/listing/*/check").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/banks/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/attachments/*/download").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/attachments/**").authenticated()
                 .anyRequest().authenticated()
             )
             .authenticationProvider(authenticationProvider())

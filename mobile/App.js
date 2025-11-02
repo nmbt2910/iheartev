@@ -10,6 +10,11 @@ import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import ListingDetailScreen from './src/screens/ListingDetailScreen';
 import CreateListingScreen from './src/screens/CreateListingScreen';
+import OrderDetailScreen from './src/screens/OrderDetailScreen';
+import SellerProfileScreen from './src/screens/SellerProfileScreen';
+import SellerRatingsScreen from './src/screens/SellerRatingsScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
+import CreateReviewScreen from './src/screens/CreateReviewScreen';
 import AdminScreen from './src/screens/AdminScreen';
 import MyTabs from './src/screens/MyTabs';
 
@@ -54,6 +59,11 @@ export default function App() {
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="ListingDetail" component={ListingDetailScreen} />
           <Stack.Screen name="CreateListing" component={CreateListingScreen} />
+          <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
+          <Stack.Screen name="SellerProfile" component={SellerProfileScreen} />
+          <Stack.Screen name="SellerRatings" component={SellerRatingsScreen} />
+          <Stack.Screen name="Profile" component={ProfileScreen} />
+          <Stack.Screen name="CreateReview" component={CreateReviewScreen} />
           <Stack.Screen name="Admin" component={AdminScreen} />
           <Stack.Screen name="My" component={MyTabs} />
         </Stack.Navigator>

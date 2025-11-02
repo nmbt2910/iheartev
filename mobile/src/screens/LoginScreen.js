@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../store/auth';
@@ -12,6 +12,7 @@ export default function LoginScreen({ navigation }) {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const { save } = useAuth();
   const signIn = async () => {
@@ -36,107 +37,220 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
+  // Keyboard listener to adjust padding when keyboard opens/closes
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+
+    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
+  }, []);
+
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <View style={styles.safeAreaWrapper}>
+      <SafeAreaView style={styles.safeAreaTop} edges={['top']}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
         <View style={styles.appbarHeader}>
           <View style={{ width: 40 }} />
           <Text style={styles.appbarContent}>Đăng nhập</Text>
           <View style={{ width: 40 }} />
         </View>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.content}>
-          <View style={styles.headerSection}>
-            <Icon name="car-electric" size={64} color="#6200ee" />
-            <Text style={styles.welcomeTitle}>Chào mừng trở lại!</Text>
-            <Text style={styles.welcomeSubtitle}>Đăng nhập để tiếp tục</Text>
-          </View>
-
-          <View style={styles.formContainer}>
-            <View style={styles.inputContainer}>
-              <Icon name="email-outline" size={20} color="#666" style={styles.inputIcon} />
-              <TextInput
-                value={email}
-                onChangeText={(text) => { setEmail(text); setError(''); }}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                placeholder="Email"
-                placeholderTextColor="#999"
-                style={styles.textInput}
-              />
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Icon name="lock-outline" size={20} color="#666" style={styles.inputIcon} />
-              <TextInput
-                value={password}
-                onChangeText={(text) => { setPassword(text); setError(''); }}
-                secureTextEntry={!showPassword}
-                placeholder="Mật khẩu"
-                placeholderTextColor="#999"
-                style={styles.textInput}
-              />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-                style={styles.passwordToggle}
-              >
-                <Icon
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color="#666"
-                />
-              </TouchableOpacity>
-            </View>
-
-            {!!error && (
-              <View style={styles.errorContainer}>
-                <Icon name="alert-circle" size={18} color="#d32f2f" />
-                <Text style={styles.errorText}>{error}</Text>
+      </SafeAreaView>
+      {Platform.OS === 'ios' ? (
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior="padding"
+        >
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 20 }
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.content}>
+              <View style={styles.headerSection}>
+                <Icon name="car-electric" size={64} color="#6200ee" />
+                <Text style={styles.welcomeTitle}>Chào mừng trở lại!</Text>
+                <Text style={styles.welcomeSubtitle}>Đăng nhập để tiếp tục</Text>
               </View>
-            )}
 
-            <TouchableOpacity
-              onPress={signIn}
-              style={[styles.loginButton, loading && styles.loginButtonDisabled]}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              {loading ? (
-                <Text style={styles.loginButtonText}>Đang đăng nhập...</Text>
-              ) : (
-                <>
-                  <Text style={styles.loginButtonText}>Đăng nhập</Text>
-                  <Icon name="arrow-right" size={20} color="white" style={{ marginLeft: 8 }} />
-                </>
-              )}
-            </TouchableOpacity>
+              <View style={styles.formContainer}>
+                <View style={styles.inputContainer}>
+                  <Icon name="email-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    value={email}
+                    onChangeText={(text) => { setEmail(text); setError(''); }}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    placeholder="Email"
+                    placeholderTextColor="#999"
+                    style={styles.textInput}
+                  />
+                </View>
 
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Register')}
-              style={styles.registerLink}
-            >
-              <Text style={styles.registerLinkText}>
-                Chưa có tài khoản? <Text style={styles.registerLinkBold}>Đăng ký ngay</Text>
-              </Text>
-            </TouchableOpacity>
-          </View>
+                <View style={styles.inputContainer}>
+                  <Icon name="lock-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    value={password}
+                    onChangeText={(text) => { setPassword(text); setError(''); }}
+                    secureTextEntry={!showPassword}
+                    placeholder="Mật khẩu"
+                    placeholderTextColor="#999"
+                    style={styles.textInput}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.passwordToggle}
+                  >
+                    <Icon
+                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color="#666"
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {!!error && (
+                  <View style={styles.errorContainer}>
+                    <Icon name="alert-circle" size={18} color="#d32f2f" />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  onPress={signIn}
+                  style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  {loading ? (
+                    <Text style={styles.loginButtonText}>Đang đăng nhập...</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.loginButtonText}>Đăng nhập</Text>
+                      <Icon name="arrow-right" size={20} color="white" style={{ marginLeft: 8 }} />
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('Register')}
+                  style={styles.registerLink}
+                >
+                  <Text style={styles.registerLinkText}>
+                    Chưa có tài khoản? <Text style={styles.registerLinkBold}>Đăng ký ngay</Text>
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={styles.container}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 40 : 20 }
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.content}>
+              <View style={styles.headerSection}>
+                <Icon name="car-electric" size={64} color="#6200ee" />
+                <Text style={styles.welcomeTitle}>Chào mừng trở lại!</Text>
+                <Text style={styles.welcomeSubtitle}>Đăng nhập để tiếp tục</Text>
+              </View>
+
+              <View style={styles.formContainer}>
+                <View style={styles.inputContainer}>
+                  <Icon name="email-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    value={email}
+                    onChangeText={(text) => { setEmail(text); setError(''); }}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    placeholder="Email"
+                    placeholderTextColor="#999"
+                    style={styles.textInput}
+                  />
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Icon name="lock-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    value={password}
+                    onChangeText={(text) => { setPassword(text); setError(''); }}
+                    secureTextEntry={!showPassword}
+                    placeholder="Mật khẩu"
+                    placeholderTextColor="#999"
+                    style={styles.textInput}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.passwordToggle}
+                  >
+                    <Icon
+                      name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color="#666"
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {!!error && (
+                  <View style={styles.errorContainer}>
+                    <Icon name="alert-circle" size={18} color="#d32f2f" />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  onPress={signIn}
+                  style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  {loading ? (
+                    <Text style={styles.loginButtonText}>Đang đăng nhập...</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.loginButtonText}>Đăng nhập</Text>
+                      <Icon name="arrow-right" size={20} color="white" style={{ marginLeft: 8 }} />
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('Register')}
+                  style={styles.registerLink}
+                >
+                  <Text style={styles.registerLinkText}>
+                    Chưa có tài khoản? <Text style={styles.registerLinkBold}>Đăng ký ngay</Text>
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
         </View>
-      </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  safeAreaWrapper: {
     flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  safeAreaTop: {
     backgroundColor: '#6200ee',
   },
   container: {
@@ -168,7 +282,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   scrollContent: {
-    flexGrow: 1,
+    paddingBottom: 20,
   },
   content: {
     flex: 1,

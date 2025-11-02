@@ -8,6 +8,7 @@ import { useAuth } from '../store/auth';
 import { listingService } from '../services/listingService';
 import { useFavorites } from '../store/favorites';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
+import { formatVND } from '../utils/currencyFormatter';
 
 export default function HomeScreen({ navigation }) {
   const [query, setQuery] = useState('');
@@ -238,9 +239,9 @@ export default function HomeScreen({ navigation }) {
 
               <View style={styles.filterSection}>
                 <View style={styles.filterLabelRow}>
-                  <Icon name="currency-usd" size={18} color="#6200ee" />
+                  <Icon name="cash" size={18} color="#6200ee" />
                   <Text style={styles.filterLabel}>
-                    Giá tối đa: {maxPrice !== null ? `$${maxPrice.toLocaleString()}` : 'Không giới hạn'}
+                    Giá tối đa: {maxPrice !== null ? formatVND(maxPrice) : 'Không giới hạn'}
                   </Text>
                 </View>
                 <Slider
@@ -377,7 +378,7 @@ export default function HomeScreen({ navigation }) {
                 </View>
                 <View style={styles.cardBody}>
                   <View style={styles.priceContainer}>
-                    <Text style={styles.cardPrice}>${item.price.toLocaleString()}</Text>
+                    <Text style={styles.cardPrice}>{formatVND(item.price)}</Text>
                     {item.conditionLabel && (
                       <View style={styles.conditionBadge}>
                         <Text style={styles.conditionText}>{item.conditionLabel}</Text>

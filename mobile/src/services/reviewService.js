@@ -6,6 +6,11 @@ export const reviewService = {
     return response.data;
   },
 
+  async updateReview(reviewId, reviewData) {
+    const response = await api.put(`/api/reviews/${reviewId}`, reviewData);
+    return response.data;
+  },
+
   async deleteReview(reviewId) {
     await api.delete(`/api/reviews/${reviewId}`);
   },

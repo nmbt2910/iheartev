@@ -2,6 +2,7 @@ package com.iheartev.api.listing;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.iheartev.api.user.User;
+import com.iheartev.api.payment.PaymentInfo;
 import jakarta.persistence.*;
 
 import java.time.Instant;
@@ -18,17 +19,25 @@ public class Listing {
     private String brand;
     private String model;
     private Integer year;
+    @Column(name = "mileage_km")
     private Integer mileageKm; // for EV
+    @Column(name = "battery_capacitykwh")
     private Integer batteryCapacityKWh;
+    @Column(name = "condition_label")
     private String conditionLabel; // verified, used, etc
     @Column(length = 2000)
     private String description;
     private Double price;
     private String status; // ACTIVE, SOLD, DRAFT
+    @Column(name = "created_at")
     private Instant createdAt;
 
     @ManyToOne(fetch = FetchType.EAGER)
     private User seller;
+
+    @OneToOne(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    @JoinColumn(name = "payment_info_id")
+    private PaymentInfo paymentInfo;
 
     // Explicit accessors to avoid Lombok processor issues during build
     public Long getId() { return id; }
@@ -57,6 +66,8 @@ public class Listing {
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public User getSeller() { return seller; }
     public void setSeller(User seller) { this.seller = seller; }
+    public PaymentInfo getPaymentInfo() { return paymentInfo; }
+    public void setPaymentInfo(PaymentInfo paymentInfo) { this.paymentInfo = paymentInfo; }
 }
 
 

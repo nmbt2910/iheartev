@@ -17,8 +17,20 @@ export const listingService = {
   },
 
   async createListing(listingData) {
-    const response = await api.post('/api/listings', listingData);
-    return response.data;
+    console.log('[listingService] Creating listing...');
+    console.log('[listingService] Request data:', JSON.stringify(listingData, null, 2));
+    try {
+      const response = await api.post('/api/listings', listingData);
+      console.log('[listingService] ✅ Listing created successfully');
+      console.log('[listingService] Response status:', response.status);
+      console.log('[listingService] Response data:', JSON.stringify(response.data, null, 2));
+      return response.data;
+    } catch (error) {
+      console.error('[listingService] ❌ Error creating listing');
+      console.error('[listingService] Error:', error);
+      console.error('[listingService] Response:', error.response?.data);
+      throw error;
+    }
   },
 
   async updateListing(id, listingData) {
