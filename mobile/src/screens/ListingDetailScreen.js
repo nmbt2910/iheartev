@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, ActivityIndicator, RefreshControl, Dimensions, BackHandler, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,14 +9,20 @@ import { orderService } from '../services/orderService';
 import { aiService } from '../services/aiService';
 import { attachmentService } from '../services/attachmentService';
 import { useFavorites } from '../store/favorites';
+import { profileService } from '../services/profileService';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { formatVND } from '../utils/currencyFormatter';
 import { Image } from 'react-native';
+import { Video } from 'expo-av';
+import * as VideoThumbnails from 'expo-video-thumbnails';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function ListingDetailScreen({ route, navigation }) {
-  const { id } = route.params;
+  const { id, refresh, fromMyListings } = route.params || {};
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [aiOverview, setAiOverview] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -24,15 +30,20 @@ export default function ListingDetailScreen({ route, navigation }) {
   const [aiExpanded, setAiExpanded] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [hasActiveOrder, setHasActiveOrder] = useState(false);
+  const [isSeller, setIsSeller] = useState(false);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const carouselScrollRef = useRef(null);
+  const videoRefs = useRef({});
+  const [videoThumbnails, setVideoThumbnails] = useState({}); // Cache for video thumbnails
   const { token, isAuthenticated } = useAuth();
   const favorites = useFavorites((state) => state.favorites);
-  const { checkFavorite, toggleFavorite } = useFavorites();
+  const { toggleFavorite } = useFavorites();
   
   const isFavorite = (listingId) => {
     return favorites.has(listingId);
   };
 
-  const loadAIOverview = async () => {
+  const loadAIOverview = useCallback(async () => {
     if (!item) return;
     setAiLoading(true);
     setAiError(null);
@@ -57,7 +68,7 @@ export default function ListingDetailScreen({ route, navigation }) {
     } finally {
       setAiLoading(false);
     }
-  };
+  }, [item]);
 
   // Simple text cleaner - removes markdown syntax
   const cleanText = (text) => {
@@ -135,65 +146,249 @@ export default function ListingDetailScreen({ route, navigation }) {
     ? formattedAIText 
     : formattedAIText.slice(0, MAX_VISIBLE_ITEMS);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const listing = await listingService.getListingById(id);
-        setItem(listing);
-        
-        // Load attachments
-        if (listing) {
-          try {
-            const atts = await attachmentService.getAttachmentsByListing(id);
-            setAttachments(Array.isArray(atts) ? atts : []);
-          } catch (error) {
-            console.error('Error loading attachments:', error);
-          }
+  const loadListingData = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    
+    try {
+      // Reset seller state when listing changes
+      setIsSeller(false);
+      setHasActiveOrder(false);
+      
+      const listing = await listingService.getListingById(id);
+      setItem(listing);
+      
+      // Load attachments
+      if (listing) {
+        try {
+          const atts = await attachmentService.getAttachmentsByListing(id);
+          const attachmentsArray = Array.isArray(atts) ? atts : [];
+          setAttachments(attachmentsArray);
           
-          // Check for active orders
-          if (isAuthenticated) {
-            try {
-              const orders = await orderService.getMyOrders();
-              const activeOrder = orders.find(o => 
-                o.listing?.id === id && 
-                o.status !== 'CANCELLED' && 
-                o.status !== 'CLOSED'
-              );
-              setHasActiveOrder(!!activeOrder);
-            } catch (error) {
-              console.error('Error checking orders:', error);
+          // Generate thumbnails for videos (in background)
+          attachmentsArray
+            .filter(att => att.type === 'VIDEO')
+            .forEach((videoAttachment) => {
+              // Generate thumbnail asynchronously
+              (async () => {
+                try {
+                  const videoUrl = attachmentService.getAttachmentUrl(videoAttachment.id);
+                  const thumbnail = await VideoThumbnails.getThumbnailAsync(videoUrl, {
+                    time: 1000,
+                    quality: 0.8,
+                  });
+                  
+                  setVideoThumbnails(prev => {
+                    // Only set if not already in cache
+                    if (prev[videoAttachment.id]) {
+                      return prev;
+                    }
+                    return {
+                      ...prev,
+                      [videoAttachment.id]: thumbnail.uri,
+                    };
+                  });
+                } catch (error) {
+                  console.error(`Error generating thumbnail for video ${videoAttachment.id}:`, error);
+                  // Don't set thumbnail if generation fails
+                }
+              })();
+            });
+        } catch (error) {
+          console.error('Error loading attachments:', error);
+        }
+        
+        // Check for active orders and if user is seller
+        if (isAuthenticated && token) {
+          try {
+            const [ordersRes, profileRes] = await Promise.all([
+              orderService.getMyOrders().catch(() => []),
+              profileService.getMyProfile().catch(() => null)
+            ]);
+            
+            // Check for active orders
+            const activeOrder = ordersRes.find(o => 
+              o.listing?.id === id && 
+              o.status !== 'CANCELLED' && 
+              o.status !== 'CLOSED'
+            );
+            setHasActiveOrder(!!activeOrder);
+            
+            // Check if user is the seller - compare IDs (handle both number and string types)
+            // Profile response has structure: { user: { id: ..., email: ..., ... }, ... }
+            const userId = profileRes?.user?.id || profileRes?.id;
+            if (listing.seller && listing.seller.id && userId) {
+              const sellerId = String(listing.seller.id);
+              const currentUserId = String(userId);
+              if (sellerId === currentUserId) {
+                setIsSeller(true);
+              }
+            }
+          } catch (error) {
+            console.error('Error checking orders or profile:', error);
+            // If profile fetch fails, still try to check seller using email or other means
+            if (listing.seller && listing.seller.email) {
+              // Could fallback to email comparison if needed
+              console.log('Profile fetch failed, listing seller:', listing.seller);
             }
           }
-          
-          // Auto-load AI overview when listing loads
-          loadAIOverview();
         }
-      } catch (error) {
-        if (error.sessionExpired) {
-          Alert.alert('Session Expired', 'Session expired. Please log in again.', [
-            { text: 'OK', onPress: () => navigation.replace('Login') }
+      }
+    } catch (error) {
+      console.error('Error loading listing:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      if (error.sessionExpired) {
+        Alert.alert('Session Expired', 'Session expired. Please log in again.', [
+          { text: 'OK', onPress: () => navigation.replace('Login') }
+        ]);
+      } else {
+        if (!showRefreshing) {
+          const errorMessage = error.response?.status === 404 
+            ? 'Tin đăng không tồn tại' 
+            : 'Không thể tải thông tin xe';
+          Alert.alert('Thông báo', errorMessage, [
+            { text: 'OK', onPress: () => navigation.goBack() }
           ]);
-        } else {
-          Alert.alert('Lỗi', 'Không thể tải thông tin xe');
-          navigation.goBack();
+          return; // Don't call navigation.goBack() twice
         }
       }
-    })();
-  }, [id, isAuthenticated]);
-
-  // Check favorite status when screen comes into focus
-  useFocusEffect(
-    React.useCallback(() => {
-      if (isAuthenticated && token && id) {
-        checkFavorite(id).catch((error) => {
-          // Silently handle favorite check errors
-          if (error.response?.status !== 401 && error.response?.status !== 403) {
-            console.error('Error checking favorite:', error);
-          }
-        });
+    } finally {
+      if (showRefreshing) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
       }
-    }, [isAuthenticated, token, id])
+    }
+  }, [id, isAuthenticated, token]);
+
+  useEffect(() => {
+    loadListingData();
+  }, [loadListingData]);
+
+  // Refresh when screen comes into focus and refresh param is present
+  useFocusEffect(
+    useCallback(() => {
+      if (refresh) {
+        loadListingData(true);
+        // Clear the refresh param to avoid refreshing on every focus
+        navigation.setParams({ refresh: undefined });
+      }
+    }, [refresh, loadListingData, navigation])
   );
+
+  const onRefresh = useCallback(() => {
+    loadListingData(true);
+  }, [loadListingData]);
+
+  // Removed automatic AI overview loading - now only loads when user clicks button
+
+  // Reset carousel index when attachments change
+  useEffect(() => {
+    setCurrentImageIndex(0);
+    if (carouselScrollRef.current) {
+      carouselScrollRef.current.scrollTo({ x: 0, animated: false });
+    }
+    // Cleanup video refs when attachments change
+    Object.keys(videoRefs.current).forEach(key => {
+      if (videoRefs.current[key]) {
+        videoRefs.current[key].unloadAsync?.();
+      }
+    });
+    videoRefs.current = {};
+  }, [attachments.length]);
+
+  // Handle video auto-play when carousel index changes
+  useEffect(() => {
+    attachments.forEach((attachment, index) => {
+      if (attachment.type === 'VIDEO') {
+        const videoRef = videoRefs.current[attachment.id];
+        if (videoRef) {
+          if (index === currentImageIndex) {
+            // Play video if it's currently visible
+            videoRef.playAsync().catch(console.error);
+          } else {
+            // Pause video if it's not visible
+            videoRef.pauseAsync().catch(console.error);
+          }
+        }
+      }
+    });
+  }, [currentImageIndex, attachments]);
+
+  // Handle screen focus/blur for video playback
+  useFocusEffect(
+    useCallback(() => {
+      // Play current video when screen is focused
+      const currentAttachment = attachments[currentImageIndex];
+      if (currentAttachment?.type === 'VIDEO') {
+        const videoRef = videoRefs.current[currentAttachment.id];
+        videoRef?.playAsync().catch(console.error);
+      }
+
+      return () => {
+        // Pause all videos when screen loses focus
+        Object.values(videoRefs.current).forEach(ref => {
+          ref?.pauseAsync().catch(console.error);
+        });
+      };
+    }, [attachments, currentImageIndex])
+  );
+
+  // Check if user is seller when item loads
+  useEffect(() => {
+    if (item && isAuthenticated && token) {
+      (async () => {
+        try {
+          const profileRes = await profileService.getMyProfile();
+          // Profile response has structure: { user: { id: ..., email: ..., ... }, ... }
+          const userId = profileRes?.user?.id || profileRes?.id;
+          // Check if user is the seller - compare IDs (handle both number and string types)
+          if (item.seller && item.seller.id && userId) {
+            const sellerId = String(item.seller.id);
+            const currentUserId = String(userId);
+            if (sellerId === currentUserId) {
+              setIsSeller(true);
+            } else {
+              setIsSeller(false);
+            }
+          } else {
+            setIsSeller(false);
+          }
+        } catch (error) {
+          console.error('Error checking if user is seller:', error);
+          setIsSeller(false);
+        }
+      })();
+    } else {
+      setIsSeller(false);
+    }
+  }, [item, isAuthenticated, token]);
+
+  // Handle hardware back button on Android when fromMyListings is true
+  useEffect(() => {
+    if (Platform.OS === 'android' && fromMyListings) {
+      const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+        // Navigate back to My tabs with MyListings tab selected
+        // Use getParent to navigate from nested navigator correctly
+        const parent = navigation.getParent();
+        if (parent) {
+          parent.navigate('My', { screen: 'MyListings' });
+        } else {
+          navigation.navigate('My', { screen: 'MyListings' });
+        }
+        return true; // Prevent default behavior
+      });
+
+      return () => backHandler.remove();
+    }
+  }, [fromMyListings, navigation]);
+
+  // Favorite status is already loaded via batch loading in HomeScreen
+  // No need for individual check - it's already in the favorites store
 
   const handleBuyNow = async () => {
     if (!isAuthenticated || !token) {
@@ -201,6 +396,12 @@ export default function ListingDetailScreen({ route, navigation }) {
         { text: 'Đăng nhập', onPress: () => navigation.navigate('Login') },
         { text: 'Hủy', style: 'cancel' }
       ]);
+      return;
+    }
+    
+    // Check if user is the seller of this listing
+    if (isSeller) {
+      Alert.alert('Thông báo', 'Bạn không thể mua chính xe của mình.');
       return;
     }
     
@@ -239,9 +440,8 @@ export default function ListingDetailScreen({ route, navigation }) {
     }
     setFavoriteLoading(true);
     try {
+      // toggleFavorite already updates the store state, no need for extra check
       await toggleFavorite(id);
-      // Refresh favorite status after toggle to ensure sync across all screens
-      await checkFavorite(id);
     } catch (error) {
       if (error.sessionExpired) {
         Alert.alert('Session Expired', 'Session expired. Please log in again.', [
@@ -255,20 +455,74 @@ export default function ListingDetailScreen({ route, navigation }) {
     }
   };
 
+  const handleEdit = () => {
+    navigation.navigate('EditListing', { listingId: id, fromMyListings: fromMyListings });
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      'Xóa tin đăng',
+      'Bạn có chắc chắn muốn xóa tin đăng này? Hành động này không thể hoàn tác.',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              await listingService.deleteListing(id);
+              Alert.alert('Thành công', 'Tin đăng đã được xóa', [
+                { text: 'OK', onPress: () => navigation.goBack() }
+              ]);
+            } catch (error) {
+              if (error.sessionExpired) {
+                Alert.alert('Session Expired', 'Session expired. Please log in again.', [
+                  { text: 'OK', onPress: () => navigation.replace('Login') }
+                ]);
+              } else {
+                Alert.alert('Lỗi', error.response?.data?.error || 'Không thể xóa tin đăng. Vui lòng thử lại.');
+              }
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   if (!item) {
     return (
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <StatusBar style="light" />
         <View style={styles.container}>
           <View style={styles.appbarHeader}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.appbarAction}>
+            <TouchableOpacity 
+              onPress={() => {
+                if (fromMyListings) {
+                  // Navigate back to My tabs with MyListings tab selected
+                  // Use getParent to navigate from nested navigator correctly
+                  const parent = navigation.getParent();
+                  if (parent) {
+                    parent.navigate('My', { screen: 'MyListings' });
+                  } else {
+                    navigation.navigate('My', { screen: 'MyListings' });
+                  }
+                } else {
+                  navigation.goBack();
+                }
+              }} 
+              style={styles.appbarAction}
+            >
               <Icon name="arrow-left" size={24} color="white" />
             </TouchableOpacity>
             <Text style={styles.appbarContent}>Chi tiết xe</Text>
             <View style={{ width: 40 }} />
           </View>
           <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Đang tải...</Text>
+            <ActivityIndicator size="large" color="#6200ee" />
+            <Text style={styles.loadingText}>Đang tải thông tin xe...</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -280,7 +534,23 @@ export default function ListingDetailScreen({ route, navigation }) {
       <StatusBar style="light" />
       <View style={styles.container}>
         <View style={styles.appbarHeader}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.appbarAction}>
+          <TouchableOpacity 
+            onPress={() => {
+              if (fromMyListings) {
+                // Navigate back to My tabs with MyListings tab selected
+                // Use getParent to navigate from nested navigator correctly
+                const parent = navigation.getParent();
+                if (parent) {
+                  parent.navigate('My', { screen: 'MyListings' });
+                } else {
+                  navigation.navigate('My', { screen: 'MyListings' });
+                }
+              } else {
+                navigation.goBack();
+              }
+            }} 
+            style={styles.appbarAction}
+          >
             <Icon name="arrow-left" size={24} color="white" />
           </TouchableOpacity>
           <Text style={styles.appbarContent} numberOfLines={1}>{`${item.brand} ${item.model}`}</Text>
@@ -291,55 +561,159 @@ export default function ListingDetailScreen({ route, navigation }) {
         style={styles.scrollView} 
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#6200ee']}
+            tintColor="#6200ee"
+          />
+        }
       >
-        {/* Hero Section with Price */}
-        <View style={styles.heroSection}>
-          <View style={styles.heroHeader}>
-            <View style={styles.heroIconContainer}>
-              <Icon name="car-electric" size={48} color="#6200ee" />
-            </View>
-            <View style={styles.heroTitleContainer}>
-              <Text style={styles.heroTitle} numberOfLines={2}>{`${item.brand} ${item.model}`}</Text>
-              <Text style={styles.heroSubtitle}>{item.year}</Text>
-            </View>
-          </View>
-          <View style={styles.priceHighlight}>
-            <Text style={styles.priceHighlightLabel}>Giá bán</Text>
-            <Text style={styles.priceHighlightValue}>{formatVND(item.price)}</Text>
-          </View>
-        </View>
-
-        {/* Attachments Gallery */}
-        {attachments.length > 0 && (
-          <View style={styles.attachmentsCard}>
-            <View style={styles.sectionHeader}>
-              <Icon name="image" size={20} color="#6200ee" />
-              <Text style={styles.sectionTitle}>Ảnh/Video</Text>
-            </View>
-            <ScrollView 
-              horizontal 
+        {/* Attachments Carousel Section */}
+        {attachments.length > 0 ? (
+          <View style={styles.carouselContainer}>
+            <ScrollView
+              horizontal
+              pagingEnabled
               showsHorizontalScrollIndicator={false}
-              style={styles.attachmentsScroll}
-              contentContainerStyle={styles.attachmentsContainer}
+              style={styles.carouselScrollView}
+              contentContainerStyle={styles.carouselContent}
+              ref={carouselScrollRef}
+              onMomentumScrollEnd={(event) => {
+                const slideIndex = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+                setCurrentImageIndex(slideIndex);
+              }}
             >
-              {attachments.map((attachment) => (
-                <View key={attachment.id} style={styles.attachmentItem}>
+              {attachments.map((attachment, index) => (
+                <View key={attachment.id} style={styles.carouselItem}>
                   {attachment.type === 'IMAGE' ? (
                     <Image 
                       source={{ uri: attachmentService.getAttachmentUrl(attachment.id) }}
-                      style={styles.attachmentImage}
+                      style={styles.carouselImage}
                       resizeMode="cover"
                     />
                   ) : (
-                    <View style={[styles.attachmentImage, styles.attachmentVideo]}>
-                      <Icon name="play-circle" size={48} color="#6200ee" />
-                    </View>
+                    <TouchableOpacity
+                      style={styles.carouselVideoContainer}
+                      activeOpacity={0.9}
+                      onPress={() => {
+                        navigation.navigate('VideoPlayer', {
+                          videoUrl: attachmentService.getAttachmentUrl(attachment.id),
+                          attachmentId: attachment.id,
+                        });
+                      }}
+                    >
+                      {/* Show thumbnail if available, otherwise show video */}
+                      {videoThumbnails[attachment.id] ? (
+                        <>
+                          <Image 
+                            source={{ uri: videoThumbnails[attachment.id] }}
+                            style={styles.carouselVideo}
+                            resizeMode="cover"
+                          />
+                          <View style={styles.videoOverlay}>
+                            <View style={styles.videoPlayButton}>
+                              <Icon name="play-circle" size={48} color="white" />
+                            </View>
+                            <Text style={styles.carouselVideoText}>Chạm để xem đầy đủ</Text>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <Video
+                            ref={(ref) => {
+                              if (ref) {
+                                videoRefs.current[attachment.id] = ref;
+                              }
+                            }}
+                            source={{ uri: attachmentService.getAttachmentUrl(attachment.id) }}
+                            style={styles.carouselVideo}
+                            resizeMode="cover"
+                            shouldPlay={index === currentImageIndex}
+                            isLooping={false}
+                            isMuted={true}
+                            useNativeControls={false}
+                            onPlaybackStatusUpdate={(status) => {
+                              // Handle video status updates if needed
+                            }}
+                          />
+                          <View style={styles.videoOverlay}>
+                            <View style={styles.videoPlayButton}>
+                              <Icon name="play-circle" size={48} color="white" />
+                            </View>
+                            <Text style={styles.carouselVideoText}>Chạm để xem đầy đủ</Text>
+                          </View>
+                        </>
+                      )}
+                    </TouchableOpacity>
                   )}
                 </View>
               ))}
             </ScrollView>
+            {attachments.length > 1 && (
+              <View style={styles.carouselPagination}>
+                {attachments.map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.paginationDot,
+                      index === currentImageIndex && styles.paginationDotActive
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={styles.featuredImagePlaceholder}>
+            <Icon name="car-electric" size={80} color="#ccc" />
+            <Text style={styles.placeholderText}>Chưa có ảnh</Text>
           </View>
         )}
+
+        {/* Hero Section with Title and Price */}
+        <View style={styles.heroSection}>
+          <View style={styles.heroContent}>
+            <View style={styles.heroTitleContainer}>
+              <Text style={styles.heroTitle} numberOfLines={2}>{`${item.brand} ${item.model}`}</Text>
+              <Text style={styles.heroSubtitle}>{item.year} • Xe điện</Text>
+            </View>
+            <View style={styles.priceSection}>
+              <Text style={styles.priceLabel}>Giá bán</Text>
+              <Text style={styles.priceValue}>{formatVND(item.price)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Quick Info Cards */}
+        <View style={styles.quickInfoContainer}>
+          <View style={styles.quickInfoCard}>
+            <View style={styles.quickInfoIcon}>
+              <Icon name="calendar" size={20} color="#6200ee" />
+            </View>
+            <Text style={styles.quickInfoLabel}>Năm</Text>
+            <Text style={styles.quickInfoValue}>{item.year}</Text>
+          </View>
+          {item.batteryCapacityKWh && (
+            <View style={styles.quickInfoCard}>
+              <View style={styles.quickInfoIcon}>
+                <Icon name="battery" size={20} color="#6200ee" />
+              </View>
+              <Text style={styles.quickInfoLabel}>Pin</Text>
+              <Text style={styles.quickInfoValue}>{item.batteryCapacityKWh} kWh</Text>
+            </View>
+          )}
+          {item.conditionLabel && (
+            <View style={styles.quickInfoCard}>
+              <View style={styles.quickInfoIcon}>
+                <Icon name="star" size={20} color="#6200ee" />
+              </View>
+              <Text style={styles.quickInfoLabel}>Tình trạng</Text>
+              <Text style={styles.quickInfoValue} numberOfLines={1}>{item.conditionLabel}</Text>
+            </View>
+          )}
+        </View>
 
         {/* AI Overview Section - Main Feature */}
         <View style={styles.aiMainCard}>
@@ -443,51 +817,16 @@ export default function ListingDetailScreen({ route, navigation }) {
           )}
         </View>
 
-        {/* Details Section */}
-        <View style={styles.detailsCard}>
-          <Text style={styles.sectionTitle}>Thông tin chi tiết</Text>
-          
-          <View style={styles.detailsList}>
-            <View style={styles.detailItem}>
-              <View style={styles.detailItemIcon}>
-                <Icon name="calendar" size={20} color="#6200ee" />
-              </View>
-              <View style={styles.detailItemContent}>
-                <Text style={styles.detailItemLabel}>Năm sản xuất</Text>
-                <Text style={styles.detailItemValue}>{item.year}</Text>
-              </View>
+        {/* Description Section */}
+        {item.description && (
+          <View style={styles.descriptionCard}>
+            <View style={styles.sectionHeader}>
+              <Icon name="text-box-outline" size={22} color="#6200ee" />
+              <Text style={styles.sectionTitle}>Mô tả</Text>
             </View>
-
-            <View style={styles.detailSeparator} />
-
-            <View style={styles.detailItem}>
-              <View style={styles.detailItemIcon}>
-                <Icon name="battery" size={20} color="#6200ee" />
-              </View>
-              <View style={styles.detailItemContent}>
-                <Text style={styles.detailItemLabel}>Dung lượng pin</Text>
-                <Text style={styles.detailItemValue}>{item.batteryCapacityKWh || 'N/A'} kWh</Text>
-              </View>
-            </View>
-
-            {item.conditionLabel && (
-              <>
-                <View style={styles.detailSeparator} />
-                <View style={styles.detailItem}>
-                  <View style={styles.detailItemIcon}>
-                    <Icon name="star" size={20} color="#6200ee" />
-                  </View>
-                  <View style={styles.detailItemContent}>
-                    <Text style={styles.detailItemLabel}>Tình trạng</Text>
-                    <View style={styles.conditionBadgeInline}>
-                      <Text style={styles.conditionTextInline}>{item.conditionLabel}</Text>
-                    </View>
-                  </View>
-                </View>
-              </>
-            )}
+            <Text style={styles.descriptionText}>{item.description}</Text>
           </View>
-        </View>
+        )}
 
         {/* Seller Info */}
         {item.seller && (
@@ -562,46 +901,96 @@ export default function ListingDetailScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Description Section */}
-        {item.description && (
-          <View style={styles.descriptionCard}>
-            <View style={styles.sectionHeader}>
-              <Icon name="text-box-outline" size={20} color="#6200ee" />
-              <Text style={styles.sectionTitle}>Mô tả</Text>
-            </View>
-            <Text style={styles.descriptionText}>{item.description}</Text>
+        {/* Additional Details Section */}
+        <View style={styles.additionalDetailsCard}>
+          <View style={styles.sectionHeader}>
+            <Icon name="information" size={22} color="#6200ee" />
+            <Text style={styles.sectionTitle}>Thông tin bổ sung</Text>
           </View>
-        )}
+          
+          <View style={styles.additionalDetailsList}>
+            {item.mileageKm && (
+              <>
+                <View style={styles.additionalDetailItem}>
+                  <Icon name="speedometer" size={18} color="#666" />
+                  <Text style={styles.additionalDetailLabel}>Số km đã đi:</Text>
+                  <Text style={styles.additionalDetailValue}>{item.mileageKm.toLocaleString()} km</Text>
+                </View>
+                <View style={styles.additionalDetailSeparator} />
+              </>
+            )}
+            {item.type && (
+              <>
+                <View style={styles.additionalDetailItem}>
+                  <Icon name="car-cog" size={18} color="#666" />
+                  <Text style={styles.additionalDetailLabel}>Loại xe:</Text>
+                  <Text style={styles.additionalDetailValue}>{item.type}</Text>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
       </ScrollView>
 
       <View style={styles.buttonContainer}>
-        <TouchableOpacity
-          onPress={handleFavorite}
-          style={[styles.favoriteButton, isFavorite(id) && styles.favoriteButtonActive]}
-          activeOpacity={0.8}
-          disabled={favoriteLoading}
-        >
-          <View style={[styles.favoriteButtonIconContainer, isFavorite(id) && styles.favoriteButtonIconContainerActive]}>
-            <Icon 
-              name={isFavorite(id) ? "heart" : "heart-outline"} 
-              size={22} 
-              color={isFavorite(id) ? "#ffffff" : "#e91e63"} 
-            />
-          </View>
-        </TouchableOpacity>
+        {isSeller ? (
+          <>
+            <TouchableOpacity
+              onPress={handleDelete}
+              disabled={loading}
+              style={[styles.deleteButtonBottom, loading && styles.buttonDisabled]}
+              activeOpacity={0.8}
+            >
+              <Icon name="delete" size={24} color="white" />
+              <Text style={styles.deleteButtonText}>Xóa</Text>
+            </TouchableOpacity>
 
-        {(!hasActiveOrder || isFavorite(id)) && (
-          <TouchableOpacity
-            onPress={handleBuyNow}
-            disabled={loading || hasActiveOrder}
-            style={[styles.primaryButton, (loading || hasActiveOrder) && styles.buttonDisabled]}
-            activeOpacity={0.8}
-          >
-            <Icon name="shopping" size={22} color="white" />
-            <Text style={styles.primaryButtonText}>
-              {loading ? 'Đang xử lý...' : hasActiveOrder ? 'Đã có đơn hàng' : 'Mua ngay'}
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleEdit}
+              disabled={loading}
+              style={[styles.editButtonBottom, loading && styles.buttonDisabled]}
+              activeOpacity={0.8}
+            >
+              <Icon name="pencil" size={22} color="white" />
+              <Text style={styles.primaryButtonText}>Chỉnh sửa</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              onPress={handleFavorite}
+              style={[styles.favoriteButtonBottom, isFavorite(id) && styles.favoriteButtonBottomActive]}
+              activeOpacity={0.8}
+              disabled={favoriteLoading}
+            >
+              <Icon 
+                name={isFavorite(id) ? "heart" : "heart-outline"} 
+                size={24} 
+                color={isFavorite(id) ? "#ffffff" : "#e91e63"} 
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleBuyNow}
+              disabled={loading || hasActiveOrder}
+              style={[styles.primaryButtonBottom, (loading || hasActiveOrder) && styles.buttonDisabled]}
+              activeOpacity={0.8}
+            >
+              {loading ? (
+                <Text style={styles.primaryButtonText}>Đang xử lý...</Text>
+              ) : hasActiveOrder ? (
+                <>
+                  <Icon name="check-circle" size={22} color="white" />
+                  <Text style={styles.primaryButtonText}>Đã có đơn hàng</Text>
+                </>
+              ) : (
+                <>
+                  <Icon name="cart" size={22} color="white" />
+                  <Text style={styles.primaryButtonText}>Mua ngay</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
         )}
       </View>
       </View>
@@ -646,14 +1035,101 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 100,
+    paddingBottom: 24,
+  },
+  carouselContainer: {
+    width: '100%',
+    height: 300,
+    backgroundColor: '#f0f0f0',
+    position: 'relative',
+  },
+  carouselScrollView: {
+    width: '100%',
+    height: '100%',
+  },
+  carouselContent: {
+    alignItems: 'center',
+  },
+  carouselItem: {
+    width: SCREEN_WIDTH,
+    height: 300,
+    backgroundColor: '#f0f0f0',
+  },
+  carouselImage: {
+    width: '100%',
+    height: '100%',
+  },
+  carouselVideoContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+    position: 'relative',
+  },
+  carouselVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  videoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  videoPlayButton: {
+    marginBottom: 12,
+  },
+  carouselVideoText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: 'white',
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  carouselPagination: {
+    position: 'absolute',
+    bottom: 16,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  paginationDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  paginationDotActive: {
+    width: 24,
+    backgroundColor: 'white',
+  },
+  featuredImagePlaceholder: {
+    width: '100%',
+    height: 300,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#999',
+    fontWeight: '500',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 80,
   },
   loadingText: {
+    marginTop: 16,
     fontSize: 16,
     color: '#666',
     fontWeight: '500',
@@ -661,183 +1137,111 @@ const styles = StyleSheet.create({
   heroSection: {
     backgroundColor: 'white',
     paddingTop: 20,
-    paddingBottom: 16,
+    paddingBottom: 20,
     paddingHorizontal: 20,
-    marginBottom: 12,
+    marginBottom: 16,
     elevation: 0,
     shadowColor: '#6200ee',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
   },
-  heroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  heroIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#f3e5f5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-    elevation: 0,
-    shadowColor: '#6200ee',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+  heroContent: {
+    gap: 16,
   },
   heroTitleContainer: {
-    flex: 1,
+    width: '100%',
   },
   heroTitle: {
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#1a1a1a',
-    marginBottom: 4,
-    letterSpacing: -0.3,
+    marginBottom: 6,
+    letterSpacing: -0.5,
+    lineHeight: 32,
   },
   heroSubtitle: {
-    fontSize: 15,
+    fontSize: 16,
     color: '#666',
     fontWeight: '500',
   },
-  priceHighlight: {
-    width: '100%',
+  priceSection: {
     backgroundColor: '#f8f4ff',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#6200ee',
   },
-  priceHighlightLabel: {
-    fontSize: 11,
+  priceLabel: {
+    fontSize: 12,
     color: '#6200ee',
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 6,
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    letterSpacing: 1,
   },
-  priceHighlightValue: {
+  priceValue: {
     fontSize: 32,
     fontWeight: 'bold',
     color: '#6200ee',
     letterSpacing: -0.5,
   },
-  detailsCard: {
+  quickInfoContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    gap: 12,
+  },
+  quickInfoCard: {
+    flex: 1,
     backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginBottom: 12,
     borderRadius: 16,
-    padding: 18,
-    elevation: 0,
-    shadowColor: '#6200ee',
-    shadowOffset: { width: 0, height: 4 },
+    padding: 16,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 12,
+    shadowRadius: 4,
     borderWidth: 1,
     borderColor: '#f0f0f0',
+  },
+  quickInfoIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#f3e5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  quickInfoLabel: {
+    fontSize: 12,
+    color: '#999',
+    fontWeight: '500',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  quickInfoValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1a1a1a',
+    textAlign: 'center',
   },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#1a1a1a',
-    marginLeft: 8,
+    marginLeft: 10,
     letterSpacing: -0.3,
-  },
-  detailsList: {
-    gap: 0,
-  },
-  detailItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  detailSeparator: {
-    height: 1,
-    backgroundColor: '#f0f0f0',
-    marginVertical: 2,
-  },
-  detailItemIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f3e5f5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-  },
-  detailItemContent: {
-    flex: 1,
-  },
-  detailItemLabel: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 4,
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  detailItemValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  conditionBadgeInline: {
-    backgroundColor: '#e8f5e9',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
-    marginTop: 4,
-  },
-  conditionTextInline: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#2e7d32',
-  },
-  attachmentsCard: {
-    backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 18,
-    padding: 20,
-    elevation: 0,
-    shadowColor: '#6200ee',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-  },
-  attachmentsScroll: {
-    marginTop: 12,
-  },
-  attachmentsContainer: {
-    gap: 12,
-  },
-  attachmentItem: {
-    width: 200,
-    height: 200,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#f0f0f0',
-  },
-  attachmentImage: {
-    width: '100%',
-    height: '100%',
-  },
-  attachmentVideo: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#e3f2fd',
   },
   sellerInfoRow: {
     flexDirection: 'row',
@@ -925,7 +1329,7 @@ const styles = StyleSheet.create({
   descriptionCard: {
     backgroundColor: 'white',
     marginHorizontal: 16,
-    marginBottom: 12,
+    marginBottom: 16,
     borderRadius: 18,
     padding: 20,
     elevation: 0,
@@ -937,10 +1341,49 @@ const styles = StyleSheet.create({
     borderColor: '#f0f0f0',
   },
   descriptionText: {
+    fontSize: 16,
+    color: '#444',
+    lineHeight: 26,
+    letterSpacing: 0.2,
+  },
+  additionalDetailsCard: {
+    backgroundColor: 'white',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 18,
+    padding: 20,
+    elevation: 0,
+    shadowColor: '#6200ee',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  additionalDetailsList: {
+    gap: 0,
+  },
+  additionalDetailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 12,
+  },
+  additionalDetailLabel: {
     fontSize: 15,
     color: '#666',
-    lineHeight: 24,
-    letterSpacing: 0.1,
+    fontWeight: '500',
+    flex: 1,
+  },
+  additionalDetailValue: {
+    fontSize: 15,
+    color: '#1a1a1a',
+    fontWeight: '600',
+  },
+  additionalDetailSeparator: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginVertical: 2,
   },
   aiMainCard: {
     backgroundColor: 'white',
@@ -1146,18 +1589,19 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     flexDirection: 'row',
-    padding: 20,
+    padding: 16,
+    paddingBottom: 20,
     backgroundColor: 'white',
     borderTopWidth: 1,
     borderTopColor: '#e8e8e8',
     gap: 12,
     elevation: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
   },
-  favoriteButton: {
+  favoriteButtonBottom: {
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -1166,48 +1610,73 @@ const styles = StyleSheet.create({
     borderColor: '#e91e63',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 0,
+    elevation: 2,
     shadowColor: '#e91e63',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
   },
-  favoriteButtonActive: {
+  favoriteButtonBottomActive: {
     backgroundColor: '#e91e63',
     borderColor: '#e91e63',
   },
-  favoriteButtonIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(233, 30, 99, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  favoriteButtonIconContainerActive: {
-    backgroundColor: 'transparent',
-  },
-  primaryButton: {
+  primaryButtonBottom: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#6200ee',
     paddingVertical: 18,
-    borderRadius: 18,
-    elevation: 0,
+    borderRadius: 28,
+    gap: 10,
+    elevation: 4,
     shadowColor: '#6200ee',
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
-    shadowRadius: 12,
+    shadowRadius: 8,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   primaryButtonText: {
-    marginLeft: 10,
     color: 'white',
-    fontSize: 17,
+    fontSize: 18,
+    fontWeight: 'bold',
+    letterSpacing: 0.3,
+  },
+  editButtonBottom: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#6200ee',
+    paddingVertical: 18,
+    borderRadius: 28,
+    gap: 10,
+    elevation: 4,
+    shadowColor: '#6200ee',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  deleteButtonBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f44336',
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    borderRadius: 28,
+    gap: 8,
+    elevation: 4,
+    shadowColor: '#f44336',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  deleteButtonText: {
+    color: 'white',
+    fontSize: 18,
     fontWeight: 'bold',
     letterSpacing: 0.3,
   },

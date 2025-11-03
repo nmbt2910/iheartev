@@ -1,6 +1,8 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
+import { clearAuthStorage } from '../utils/authUtils';
+import { reset } from '../utils/navigationService';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:3000';
 
@@ -81,40 +83,119 @@ api.interceptors.response.use(
       console.error('[API Response] Error response headers:', error.response.headers);
     }
 
-    // If error is 401 (Unauthorized) and we haven't retried
+    // If error is 401 (Unauthorized) - definitely token expired/invalid
+    // For 403 (Forbidden), we need to distinguish between token expiration and permission issues
     if (error.response?.status === 401 && !originalRequest._retry) {
       console.log('[API Response] 401 Unauthorized - handling session expiration');
       originalRequest._retry = true;
 
-      // Clear stored auth data
+      // Skip alert for token validation calls - token checker will handle it
+      const isValidationCall = originalRequest.url?.includes('/api/auth/validate');
+      
+      // Clear auth storage
       try {
-        await AsyncStorage.multiRemove(['token', 'role']);
-        console.log('[API Response] Auth data cleared');
+        await clearAuthStorage();
+        console.log('[API Response] Auth storage cleared');
+        
+        // Update auth store state by importing it lazily to avoid circular dependency
+        // The store will be updated when App.js detects isAuthenticated change
+        const { clearAuthState } = await import('../store/auth');
+        clearAuthState();
       } catch (e) {
-        console.error('[API Response] Error clearing auth data:', e);
+        console.error('[API Response] Error clearing auth state:', e);
       }
 
-      // Show session expired message
-      Alert.alert(
-        'Session Expired',
-        'Session expired. Please log in again.',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              // Navigation will be handled by the app
-              // This will trigger navigation in the component that receives the error
+      // Navigate to login screen
+      reset({
+        index: 0,
+        routes: [{ name: 'Login' }],
+      });
+
+      // Show session expired message in Vietnamese (only for non-validation calls)
+      // Token checker will handle alerts for validation calls
+      if (!isValidationCall) {
+        Alert.alert(
+          'Phiên đăng nhập đã hết hạn',
+          'Phiên đăng nhập của bạn đã hết hạn. Vui lòng đăng nhập lại.',
+          [
+            {
+              text: 'Đồng ý',
+              onPress: () => {
+                // Navigation already handled above
+              },
             },
-          },
-        ],
-        { cancelable: false }
-      );
+          ],
+          { cancelable: false }
+        );
+      }
 
       return Promise.reject({
         ...error,
         sessionExpired: true,
         message: 'Session expired. Please log in again.',
       });
+    }
+
+    // For 403 (Forbidden), check if token is still valid before assuming expiration
+    // A 403 could be due to missing permissions (e.g., not admin) rather than expired token
+    if (error.response?.status === 403 && !originalRequest._retry) {
+      console.log('[API Response] 403 Forbidden - checking if token is still valid');
+      originalRequest._retry = true;
+
+      // Validate token to see if it's expired or just a permission issue
+      try {
+        const { authService } = await import('./authService');
+        await authService.validateToken();
+        // Token is valid, so 403 is a permission issue, not token expiration
+        console.log('[API Response] Token is valid, 403 is a permission issue, not token expiration');
+        return Promise.reject(error); // Re-throw original error for caller to handle
+      } catch (validationError) {
+        // Token validation failed, so token is expired/invalid
+        console.log('[API Response] Token validation failed, 403 is due to token expiration');
+        
+        // Skip alert for token validation calls - token checker will handle it
+        const isValidationCall = originalRequest.url?.includes('/api/auth/validate');
+        
+        // Clear auth storage
+        try {
+          await clearAuthStorage();
+          console.log('[API Response] Auth storage cleared');
+          
+          const { clearAuthState } = await import('../store/auth');
+          clearAuthState();
+        } catch (e) {
+          console.error('[API Response] Error clearing auth state:', e);
+        }
+
+        // Navigate to login screen
+        reset({
+          index: 0,
+          routes: [{ name: 'Login' }],
+        });
+
+        // Show session expired message in Vietnamese (only for non-validation calls)
+        if (!isValidationCall) {
+          Alert.alert(
+            'Phiên đăng nhập đã hết hạn',
+            'Phiên đăng nhập của bạn đã hết hạn. Vui lòng đăng nhập lại.',
+            [
+              {
+                text: 'Đồng ý',
+                onPress: () => {
+                  // Navigation already handled above
+                },
+              },
+            ],
+            { cancelable: false }
+          );
+        }
+
+        return Promise.reject({
+          ...error,
+          sessionExpired: true,
+          message: 'Session expired. Please log in again.',
+        });
+      }
     }
 
     return Promise.reject(error);

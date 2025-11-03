@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { sellerService } from '../services/sellerService';
+import { formatVND } from '../utils/currencyFormatter';
 
 export default function SellerRatingsScreen({ route, navigation }) {
   const { sellerId } = route.params;
@@ -18,7 +19,12 @@ export default function SellerRatingsScreen({ route, navigation }) {
     try {
       setLoading(true);
       const data = await sellerService.getSellerReviews(sellerId);
-      setReviews(Array.isArray(data) ? data : []);
+      const reviewsData = Array.isArray(data) ? data : [];
+      console.log('Loaded reviews:', reviewsData.length);
+      if (reviewsData.length > 0) {
+        console.log('First review sample:', JSON.stringify(reviewsData[0], null, 2));
+      }
+      setReviews(reviewsData);
     } catch (error) {
       console.error('Error loading reviews:', error);
       Alert.alert('Lỗi', 'Không thể tải đánh giá');
@@ -85,7 +91,9 @@ export default function SellerRatingsScreen({ route, navigation }) {
                       <Icon name="account-circle" size={40} color="#6200ee" />
                     </View>
                     <View style={styles.reviewerDetails}>
-                      <Text style={styles.reviewerName}>{review.reviewer.fullName}</Text>
+                      <Text style={styles.reviewerName}>
+                        {review.reviewer?.fullName || 'Người dùng'}
+                      </Text>
                       <Text style={styles.reviewDate}>
                         {review.createdAt ? new Date(review.createdAt).toLocaleDateString('vi-VN') : ''}
                       </Text>
@@ -98,6 +106,43 @@ export default function SellerRatingsScreen({ route, navigation }) {
                 {review.comment && (
                   <Text style={styles.reviewComment}>{review.comment}</Text>
                 )}
+                {/* Order Information */}
+                {review.order ? (
+                  <TouchableOpacity
+                    style={styles.orderInfoContainer}
+                    onPress={() => navigation.navigate('OrderDetail', { orderId: review.order.id })}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.orderInfoHeader}>
+                      <Icon name="receipt" size={16} color="#6200ee" />
+                      <Text style={styles.orderInfoLabel}>Đơn hàng:</Text>
+                    </View>
+                    {review.order.listing ? (
+                      <>
+                        <Text style={styles.orderInfoText} numberOfLines={1}>
+                          {review.order.listing.brand} {review.order.listing.model} {review.order.listing.year}
+                        </Text>
+                        <Text style={styles.orderInfoSubtext}>
+                          Số tiền: {formatVND(review.order.amount || 0)}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={styles.orderInfoSubtext}>
+                        Đơn hàng ID: {review.order.id}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                ) : review.orderId ? (
+                  <View style={[styles.orderInfoContainer, styles.orderInfoDisabled]}>
+                    <View style={styles.orderInfoHeader}>
+                      <Icon name="receipt" size={16} color="#999" />
+                      <Text style={[styles.orderInfoLabel, { color: '#999' }]}>Đơn hàng:</Text>
+                    </View>
+                    <Text style={[styles.orderInfoSubtext, { color: '#999' }]}>
+                      Không thể tải thông tin đơn hàng (ID: {review.orderId})
+                    </Text>
+                  </View>
+                ) : null}
                 {review.updatedAt && review.updatedAt !== review.createdAt && (
                   <Text style={styles.editLabel}>Đã chỉnh sửa</Text>
                 )}
@@ -202,6 +247,39 @@ const styles = StyleSheet.create({
     color: '#999',
     fontStyle: 'italic',
     marginTop: 8,
+  },
+  orderInfoContainer: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#f8f4ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e8dfff',
+  },
+  orderInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  orderInfoLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6200ee',
+  },
+  orderInfoText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 4,
+  },
+  orderInfoSubtext: {
+    fontSize: 12,
+    color: '#666',
+  },
+  orderInfoDisabled: {
+    backgroundColor: '#f5f5f5',
+    borderColor: '#e0e0e0',
   },
   emptyContainer: {
     alignItems: 'center',

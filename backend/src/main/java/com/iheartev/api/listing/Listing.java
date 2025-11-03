@@ -28,9 +28,13 @@ public class Listing {
     @Column(length = 2000)
     private String description;
     private Double price;
-    private String status; // ACTIVE, SOLD, DRAFT
+    private String status; // PENDING, APPROVED, REJECTED, SOLD, INACTIVE (soft deleted)
     @Column(name = "created_at")
     private Instant createdAt;
+    @Column(name = "edited_after_rejection")
+    private Boolean editedAfterRejection;
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     @ManyToOne(fetch = FetchType.EAGER)
     private User seller;
@@ -68,6 +72,10 @@ public class Listing {
     public void setSeller(User seller) { this.seller = seller; }
     public PaymentInfo getPaymentInfo() { return paymentInfo; }
     public void setPaymentInfo(PaymentInfo paymentInfo) { this.paymentInfo = paymentInfo; }
+    public Boolean getEditedAfterRejection() { return editedAfterRejection; }
+    public void setEditedAfterRejection(Boolean editedAfterRejection) { this.editedAfterRejection = editedAfterRejection; }
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
 }
 
 

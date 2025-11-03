@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../store/auth';
@@ -10,31 +10,38 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 export default function AdminScreen({ navigation }) {
   const { isAuthenticated, role } = useAuth();
   const [summary, setSummary] = useState({});
+  const [pendingListings, setPendingListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [processingId, setProcessingId] = useState(null);
 
   useAuthGuard(true);
 
   useEffect(() => {
     if (role !== 'ADMIN') {
-      Alert.alert('Access Denied', 'Admin access required', [
+      Alert.alert('Truy cập bị từ chối', 'Yêu cầu quyền quản trị viên', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
     }
   }, [role]);
 
-  const loadSummary = async () => {
+  const loadData = async () => {
     if (!isAuthenticated || role !== 'ADMIN') return;
     try {
-      const res = await adminService.getSummaryReport();
-      setSummary(res || {});
+      const [summaryRes, pendingRes] = await Promise.all([
+        adminService.getSummaryReport(),
+        adminService.getPendingListings()
+      ]);
+      setSummary(summaryRes || {});
+      setPendingListings(Array.isArray(pendingRes) ? pendingRes : []);
     } catch (error) {
       if (error.sessionExpired) {
-        Alert.alert('Session Expired', 'Session expired. Please log in again.', [
+        Alert.alert('Phiên đăng nhập hết hạn', 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', [
           { text: 'OK', onPress: () => navigation.replace('Login') }
         ]);
       } else {
-        console.error('Error loading summary:', error);
+        console.error('Error loading data:', error);
+        Alert.alert('Lỗi', 'Không thể tải dữ liệu quản trị');
       }
     } finally {
       setLoading(false);
@@ -43,14 +50,59 @@ export default function AdminScreen({ navigation }) {
 
   useEffect(() => {
     if (isAuthenticated && role === 'ADMIN') {
-      loadSummary();
+      loadData();
     }
   }, [isAuthenticated, role]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadSummary();
+    await loadData();
     setRefreshing(false);
+  };
+
+  const handleApprove = async (listingId) => {
+    setProcessingId(listingId);
+    try {
+      await adminService.approveListing(listingId);
+      Alert.alert('Thành công', 'Tin đăng đã được duyệt');
+      await loadData();
+    } catch (error) {
+      console.error('Error approving listing:', error);
+      Alert.alert('Lỗi', error.response?.data?.error || 'Không thể duyệt tin đăng');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleReject = async (listingId) => {
+    Alert.alert(
+      'Từ chối tin đăng',
+      'Bạn có chắc chắn muốn từ chối tin đăng này?',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Từ chối',
+          style: 'destructive',
+          onPress: async () => {
+            setProcessingId(listingId);
+            try {
+              const result = await adminService.rejectListing(listingId);
+              if (result.deletedAt) {
+                Alert.alert('Tin đăng đã bị xóa', 'Tin đăng đã được tự động xóa vì bị từ chối lần thứ hai.');
+              } else {
+                Alert.alert('Tin đăng đã bị từ chối', 'Người bán có thể chỉnh sửa và gửi lại tin đăng một lần.');
+              }
+              await loadData();
+            } catch (error) {
+              console.error('Error rejecting listing:', error);
+              Alert.alert('Lỗi', error.response?.data?.error || 'Không thể từ chối tin đăng');
+            } finally {
+              setProcessingId(null);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const StatCard = ({ icon, title, value, color }) => (
@@ -64,6 +116,27 @@ export default function AdminScreen({ navigation }) {
       </View>
     </View>
   );
+
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <StatusBar style="light" />
+        <View style={styles.container}>
+          <View style={styles.appbarHeader}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.appbarAction}>
+              <Icon name="arrow-left" size={24} color="white" />
+            </TouchableOpacity>
+            <Text style={styles.appbarContent}>Bảng điều khiển</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#6200ee" />
+            <Text style={styles.loadingText}>Đang tải dữ liệu...</Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -90,14 +163,29 @@ export default function AdminScreen({ navigation }) {
 
         <View style={styles.statsContainer}>
           <StatCard
-            icon="car-multiple"
-            title="Tin đang hoạt động"
-            value={summary.activeListings}
+            icon="check-circle"
+            title="Đã duyệt"
+            value={summary.approvedListings}
             color="#4caf50"
           />
           <StatCard
-            icon="check-circle"
-            title="Tin đã bán"
+            icon="clock-outline"
+            title="Chờ duyệt"
+            value={summary.pendingListings}
+            color="#ff9800"
+          />
+        </View>
+
+        <View style={styles.statsContainer}>
+          <StatCard
+            icon="close-circle"
+            title="Đã từ chối"
+            value={summary.rejectedListings}
+            color="#f44336"
+          />
+          <StatCard
+            icon="check-all"
+            title="Đã bán"
             value={summary.soldListings}
             color="#2196f3"
           />
@@ -121,6 +209,63 @@ export default function AdminScreen({ navigation }) {
                 color="#9c27b0"
               />
             )}
+          </View>
+        )}
+
+        {pendingListings.length > 0 && (
+          <View style={styles.pendingSection}>
+            <Text style={styles.sectionTitle}>Tin đăng chờ duyệt ({pendingListings.length})</Text>
+            {pendingListings.map((listing) => (
+              <View key={listing.id} style={styles.pendingCard}>
+                <View style={styles.pendingCardContent}>
+                  <Text style={styles.pendingCardTitle}>
+                    {listing.brand} {listing.model} ({listing.year})
+                  </Text>
+                  <Text style={styles.pendingCardPrice}>
+                    {new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(listing.price)}
+                  </Text>
+                  <Text style={styles.pendingCardSeller} numberOfLines={1}>
+                    Người đăng: {listing.seller?.fullName || listing.seller?.email || 'Không xác định'}
+                  </Text>
+                  {listing.editedAfterRejection && (
+                    <View style={styles.editedBadge}>
+                      <Icon name="pencil" size={12} color="#ff9800" />
+                      <Text style={styles.editedBadgeText}>Đã chỉnh sửa sau khi từ chối</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.pendingCardActions}>
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.approveButton]}
+                    onPress={() => handleApprove(listing.id)}
+                    disabled={processingId === listing.id}
+                  >
+                    {processingId === listing.id ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <>
+                        <Icon name="check" size={18} color="white" />
+                        <Text style={styles.actionButtonText}>Duyệt</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.rejectButton]}
+                    onPress={() => handleReject(listing.id)}
+                    disabled={processingId === listing.id}
+                  >
+                    {processingId === listing.id ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <>
+                        <Icon name="close" size={18} color="white" />
+                        <Text style={styles.actionButtonText}>Từ chối</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 
@@ -260,5 +405,102 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#1976d2',
     lineHeight: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
+  },
+  pendingSection: {
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  pendingCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  pendingCardContent: {
+    marginBottom: 12,
+  },
+  pendingCardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  pendingCardPrice: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#6200ee',
+    marginBottom: 4,
+  },
+  pendingCardSeller: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  editedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  editedBadgeText: {
+    fontSize: 12,
+    color: '#e65100',
+    marginLeft: 4,
+    fontWeight: '500',
+  },
+  pendingCardActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    gap: 6,
+  },
+  approveButton: {
+    backgroundColor: '#4caf50',
+  },
+  rejectButton: {
+    backgroundColor: '#f44336',
+  },
+  actionButtonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });

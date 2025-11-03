@@ -27,7 +27,9 @@ export const orderService = {
   },
 
   async getAIInsights(orderId) {
-    const response = await api.get(`/api/orders/${orderId}/ai/insights`);
+    const response = await api.get(`/api/orders/${orderId}/ai/insights`, {
+      timeout: 30000, // 30 seconds timeout for AI processing
+    });
     return response.data;
   },
 

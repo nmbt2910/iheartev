@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { authService } from '../services/authService';
 import { useAuth } from '../store/auth';
@@ -32,7 +33,19 @@ export default function RegisterScreen({ navigation }) {
     try {
       const data = await authService.register(email, password, fullName, phone);
       if (data.token) {
+        // Save token to auth store (token already stored in AsyncStorage by authService)
         await save(data.token, 'MEMBER');
+        console.log('[Register Screen] Token saved to AsyncStorage and auth store');
+        
+        // Verify token is stored correctly
+        const storedToken = await AsyncStorage.getItem('token');
+        if (storedToken === data.token) {
+          console.log('[Register Screen] Token verified in AsyncStorage');
+        } else {
+          console.warn('[Register Screen] Token mismatch in AsyncStorage, re-saving...');
+          await save(data.token, 'MEMBER');
+        }
+        
         Alert.alert('Thành công', 'Đăng ký thành công!', [
           { text: 'OK', onPress: () => navigation.replace('Home') }
         ]);

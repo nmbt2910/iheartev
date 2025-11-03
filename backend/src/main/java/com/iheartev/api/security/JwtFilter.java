@@ -37,24 +37,24 @@ public class JwtFilter extends OncePerRequestFilter {
         
         logger.info("=== JWT FILTER - Request: {} {} ===", method, path);
         
-        // Skip JWT validation for public endpoints
-        // Note: /api/auth/validate requires authentication, so it's NOT in this list
-        boolean isPublicEndpoint = path.startsWith("/v3/api-docs") || 
+        // Endpoints that don't need authentication at all (no token processing)
+        boolean skipTokenProcessing = path.startsWith("/v3/api-docs") || 
             path.startsWith("/swagger-ui") || 
             path.startsWith("/swagger-resources") || 
             path.startsWith("/webjars") ||
             path.equals("/api/ai/overview") ||
             path.equals("/api/auth/login") ||
-            path.equals("/api/auth/register") ||
-            (path.startsWith("/api/listings/") && "GET".equals(method));
+            path.equals("/api/auth/register");
         
-        if (isPublicEndpoint) {
-            logger.info("Skipping JWT validation for public endpoint: {} {}", method, path);
+        if (skipTokenProcessing) {
+            logger.info("Skipping JWT validation for endpoint: {} {}", method, path);
             filterChain.doFilter(request, response);
             return;
         }
         
-        logger.debug("Path {} does not match public endpoints, checking authentication", path);
+        // For other endpoints (including GET /api/listings/**), process token if present
+        // but don't require it (allows optional authentication for public endpoints)
+        logger.debug("Processing authentication for path: {}", path);
         
         final String authHeader = request.getHeader("Authorization");
         logger.debug("Authorization header present: {}", authHeader != null);

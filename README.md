@@ -23,6 +23,7 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
 
 #### Quản lý Tin đăng (Listings)
 - ✅ Tạo, sửa, xóa tin đăng
+- ✅ **Chỉnh sửa tin đăng**: Cập nhật thông tin, thay đổi attachments (xóa cũ, thêm mới)
 - ✅ Tìm kiếm và lọc tin đăng (theo hãng, năm, giá, dung lượng pin)
 - ✅ Trạng thái tin đăng (ACTIVE, DRAFT, SOLD)
 - ✅ Hỗ trợ cả EV và Battery
@@ -56,6 +57,12 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
 - ✅ Xem lịch sử đã bán của người bán
 - ✅ Phân tích AI về uy tín người bán
 
+#### Quản lý Hồ sơ Người mua
+- ✅ Xem hồ sơ người mua (từ trang chi tiết đơn hàng)
+- ✅ Xem đánh giá và rating của người mua
+- ✅ Xem lịch sử mua hàng thành công
+- ✅ Thống kê đánh giá nhận được
+
 #### Đánh giá & Nhận xét
 - ✅ Đánh giá người bán sau khi đơn hàng đóng
 - ✅ Đánh giá người mua bởi người bán
@@ -67,7 +74,9 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
 - ✅ Upload ảnh (tối đa 5 ảnh, mỗi ảnh tối đa 10MB)
 - ✅ Upload video (tối đa 1 video, tối đa 10MB)
 - ✅ Hiển thị gallery ảnh/video trên trang chi tiết tin đăng
+- ✅ **Video player full-screen**: Xem video ở chế độ toàn màn hình với controls đầy đủ
 - ✅ Download và preview attachments
+- ✅ Quản lý attachments khi chỉnh sửa tin đăng (xóa và thêm mới)
 
 #### Quản lý Cá nhân
 - ✅ Quản lý hồ sơ cá nhân (xem/sửa thông tin)
@@ -88,6 +97,8 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
 - ✅ Tự động kiểm tra và validate token
 - ✅ Session expired handling với thông báo rõ ràng
 - ✅ Bảo vệ routes với authentication guard
+- ✅ **Token checker hook**: Tự động kiểm tra token validity
+- ✅ **Connection error handling**: Modal hiển thị lỗi kết nối với countdown tự động retry
 
 #### Trang chủ (Home)
 - ✅ Danh sách xe với search real-time (debounced)
@@ -102,10 +113,15 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
   - Format text đẹp (headings, numbered lists, paragraphs)
   - Expand/Collapse để kiểm soát độ dài nội dung
   - Tự động loại bỏ markdown formatting
-- ✅ **Gallery ảnh/video**: Hiển thị tất cả attachments (ảnh và video)
+- ✅ **Gallery ảnh/video**: 
+  - Hiển thị tất cả attachments (ảnh và video)
+  - **Video player full-screen**: Xem video ở chế độ toàn màn hình
+  - Video controls đầy đủ: play/pause, seek, volume, fullscreen
+  - Auto-hide controls khi phát video
 - ✅ **Thông tin thanh toán**: 
   - Hiển thị phương thức thanh toán (Tiền mặt/VietQR)
   - Chi tiết VietQR (ngân hàng, số tài khoản, số tiền, nội dung)
+  - **Mã QR VietQR**: Tự động generate QR code theo chuẩn EMV
   - Cảnh báo lừa đảo nổi bật
 - ✅ **Liên kết hồ sơ người bán**: Xem thông tin và đánh giá người bán
 - ✅ Thông tin chi tiết xe
@@ -131,8 +147,13 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
   - Xem đánh giá đã gửi
   - Xem đánh giá đã nhận
 
-#### Tạo Tin đăng
+#### Tạo & Chỉnh sửa Tin đăng
 - ✅ Form tạo tin với validation đầy đủ
+- ✅ **Chỉnh sửa tin đăng**: 
+  - Cập nhật tất cả thông tin tin đăng
+  - Quản lý attachments: xóa attachments cũ, upload attachments mới
+  - Giữ nguyên hoặc thay đổi phương thức thanh toán
+  - Preview attachments trước khi lưu
 - ✅ **Phương thức thanh toán**: 
   - Chọn thanh toán tiền mặt hoặc VietQR
   - Form động cho thông tin VietQR (ngân hàng, số tài khoản, số tiền, nội dung)
@@ -176,6 +197,13 @@ Một nền tảng thương mại điện tử cho phép người dùng mua bán
 - ✅ Danh sách đánh giá đầy đủ (màn hình riêng)
 - ✅ Tab xem tin đăng hiện tại
 - ✅ Tab xem lịch sử đã bán
+
+#### Hồ sơ Người mua (Buyer Profile)
+- ✅ Xem thông tin người mua (từ trang chi tiết đơn hàng)
+- ✅ Rating trung bình và tổng số đánh giá nhận được
+- ✅ Xem lịch sử mua hàng thành công
+- ✅ Tab xem đánh giá nhận được
+- ✅ Tab xem các giao dịch đã hoàn thành
 
 ## 🛠 Công nghệ sử dụng
 
@@ -316,12 +344,14 @@ Mật khẩu cho tất cả test accounts: `Password123!`
 - Loading states và error handling rõ ràng
 
 ### Comprehensive Features
-- **Seller Profile System**: Xem hồ sơ, đánh giá, và lịch sử bán hàng
-- **Payment Integration**: VietQR với danh sách ngân hàng đầy đủ
-- **Order Management**: Vòng đời đơn hàng đầy đủ từ tạo đến đóng
-- **AI Insights**: Phân tích người bán và giá cả trong chi tiết đơn hàng
-- **File Attachments**: Upload và hiển thị ảnh/video cho tin đăng
+- **Seller & Buyer Profile System**: Xem hồ sơ, đánh giá, và lịch sử giao dịch cho cả người bán và người mua
+- **Payment Integration**: VietQR với danh sách ngân hàng đầy đủ, tự động generate QR code theo chuẩn EMV
+- **Order Management**: Vòng đời đơn hàng đầy đủ từ tạo đến đóng với AI insights
+- **AI Insights**: Phân tích người bán/người mua và giá cả trong chi tiết đơn hàng
+- **File Attachments**: Upload, quản lý và hiển thị ảnh/video cho tin đăng với video player full-screen
 - **Review System**: Đánh giá 2 chiều (mua-bán) với giới hạn chỉnh sửa
+- **Listing Management**: Tạo, chỉnh sửa và quản lý tin đăng với attachment management
+- **Error Handling**: Connection error modal với auto-retry và token validation
 
 ## 🔧 Cấu trúc Project
 
@@ -342,7 +372,7 @@ iheartev/
 │   │       │       ├── security/        # JWT & Security config
 │   │       │       ├── social/          # Reviews & Favorites
 │   │       │       ├── transaction/     # Orders & AI insights
-│   │       │       └── user/            # User & Seller profiles
+│   │       │       └── user/            # User, Seller & Buyer profiles
 │   │       └── resources/
 │   │           ├── data.sql                    # Seed data
 │   │           └── migration_*.sql             # Migration scripts
@@ -352,22 +382,48 @@ iheartev/
 ├── mobile/                     # React Native Mobile App
 │   ├── src/
 │   │   ├── screens/            # Screen components
+│   │   │   ├── AdminScreen.js
+│   │   │   ├── BuyerProfileScreen.js
 │   │   │   ├── CreateListingScreen.js
 │   │   │   ├── CreateReviewScreen.js
+│   │   │   ├── EditListingScreen.js
 │   │   │   ├── HomeScreen.js
 │   │   │   ├── ListingDetailScreen.js
+│   │   │   ├── LoginScreen.js
+│   │   │   ├── MyTabs.js
 │   │   │   ├── OrderDetailScreen.js
 │   │   │   ├── ProfileScreen.js
+│   │   │   ├── RegisterScreen.js
 │   │   │   ├── SellerProfileScreen.js
-│   │   │   └── SellerRatingsScreen.js
+│   │   │   ├── SellerRatingsScreen.js
+│   │   │   └── VideoPlayerScreen.js
+│   │   ├── components/         # Reusable components
+│   │   │   └── ConnectionErrorModal.js
 │   │   ├── services/           # API services
 │   │   │   ├── api.js                 # Axios instance & interceptors
-│   │   │   ├── attachmentService.js   # File upload (using fetch)
-│   │   │   ├── bankService.js         # Bank list
-│   │   │   └── ...
+│   │   │   ├── adminService.js       # Admin operations
+│   │   │   ├── aiService.js          # AI integration
+│   │   │   ├── attachmentService.js  # File upload (using fetch)
+│   │   │   ├── authService.js        # Authentication
+│   │   │   ├── bankService.js        # Bank list
+│   │   │   ├── buyerService.js       # Buyer profile
+│   │   │   ├── favoriteService.js    # Favorites management
+│   │   │   ├── listingService.js     # Listings CRUD
+│   │   │   ├── orderService.js       # Orders management
+│   │   │   ├── profileService.js     # User profile
+│   │   │   ├── reviewService.js      # Reviews
+│   │   │   └── sellerService.js      # Seller profile
 │   │   ├── store/              # Zustand state management
-│   │   ├── hooks/              # Custom hooks (useAuthGuard)
-│   │   └── utils/              # Utilities (currencyFormatter)
+│   │   │   ├── auth.js
+│   │   │   └── favorites.js
+│   │   ├── hooks/              # Custom hooks
+│   │   │   ├── useAuthGuard.js       # Route protection
+│   │   │   └── useTokenChecker.js    # Token validation
+│   │   └── utils/              # Utilities
+│   │       ├── authUtils.js          # Authentication helpers
+│   │       ├── currencyFormatter.js   # VND formatting
+│   │       ├── navigationService.js   # Navigation helpers
+│   │       └── vietqrGenerator.js     # VietQR QR code generator
 │   ├── DEBUG_LOGS.md           # Guide to view console logs
 │   └── package.json
 │
@@ -394,6 +450,8 @@ iheartev/
 ### Payment
 - Hỗ trợ 2 phương thức: Tiền mặt khi nhận hàng và Chuyển khoản VietQR
 - VietQR yêu cầu đầy đủ: ngân hàng, số tài khoản, số tiền, nội dung chuyển khoản
+- **VietQR QR Code Generator**: Tự động generate QR code theo chuẩn EMV cho thanh toán VietQR
+- QR code được hiển thị trong chi tiết đơn hàng và chi tiết tin đăng
 - Cảnh báo lừa đảo được hiển thị rõ ràng
 
 ### Order Lifecycle

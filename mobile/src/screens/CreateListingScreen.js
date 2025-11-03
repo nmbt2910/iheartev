@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ScrollVi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { useAuth } from '../store/auth';
 import { listingService } from '../services/listingService';
@@ -15,8 +16,8 @@ import { formatVND, parseVND } from '../utils/currencyFormatter';
 export default function CreateListingScreen({ navigation }) {
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
-  const [year, setYear] = useState('2021');
-  const [capacity, setCapacity] = useState('60');
+  const [year, setYear] = useState('');
+  const [capacity, setCapacity] = useState('');
   const [price, setPrice] = useState('');
   const [desc, setDesc] = useState('');
   const [suggestion, setSuggestion] = useState('');
@@ -28,6 +29,7 @@ export default function CreateListingScreen({ navigation }) {
   // Payment info
   const [paymentMethod, setPaymentMethod] = useState('CASH'); // CASH or VIETQR
   const [banks, setBanks] = useState([]);
+  const [loadingBanks, setLoadingBanks] = useState(true);
   const [selectedBank, setSelectedBank] = useState(null);
   const [accountNumber, setAccountNumber] = useState('');
   const [transactionAmount, setTransactionAmount] = useState('');
@@ -109,10 +111,13 @@ export default function CreateListingScreen({ navigation }) {
 
   const loadBanks = async () => {
     try {
+      setLoadingBanks(true);
       const bankList = await bankService.getAllBanks();
       setBanks(bankList);
     } catch (error) {
       console.error('Error loading banks:', error);
+    } finally {
+      setLoadingBanks(false);
     }
   };
 
@@ -169,11 +174,32 @@ export default function CreateListingScreen({ navigation }) {
           Alert.alert('Lỗi', 'Kích thước file không được vượt quá 10MB');
           return;
         }
-        setAttachments([...attachments, {
-          uri: asset.uri,
-          type: 'VIDEO',
-          fileName: asset.fileName || 'video.mp4'
-        }]);
+
+        // Generate thumbnail for video
+        try {
+          const thumbnail = await VideoThumbnails.getThumbnailAsync(
+            asset.uri,
+            {
+              time: 1000, // Get thumbnail at 1 second
+              quality: 0.8,
+            }
+          );
+
+          setAttachments([...attachments, {
+            uri: asset.uri,
+            type: 'VIDEO',
+            fileName: asset.fileName || 'video.mp4',
+            thumbnailUri: thumbnail.uri, // Store thumbnail URI
+          }]);
+        } catch (thumbnailError) {
+          console.error('Error generating thumbnail:', thumbnailError);
+          // Still add video even if thumbnail generation fails
+          setAttachments([...attachments, {
+            uri: asset.uri,
+            type: 'VIDEO',
+            fileName: asset.fileName || 'video.mp4',
+          }]);
+        }
       }
     } catch (error) {
       Alert.alert('Lỗi', 'Không thể chọn video');
@@ -323,18 +349,25 @@ export default function CreateListingScreen({ navigation }) {
         try {
           console.log('Preparing attachments for upload...');
           // Prepare files for upload
-          const files = attachments.map((attachment, index) => {
-            const fileData = {
+          const files = [];
+          attachments.forEach((attachment, index) => {
+            // Add the main attachment
+            files.push({
               uri: attachment.uri,
               type: attachment.type === 'IMAGE' ? 'image/jpeg' : 'video/mp4',
               fileName: attachment.fileName || `attachment_${Date.now()}_${index}.${attachment.type === 'IMAGE' ? 'jpg' : 'mp4'}`,
-            };
-            console.log(`File ${index + 1}:`, { 
-              uri: fileData.uri.substring(0, 50) + '...', 
-              type: fileData.type, 
-              fileName: fileData.fileName 
             });
-            return fileData;
+            
+            // If it's a video with thumbnail, add thumbnail as an image
+            if (attachment.type === 'VIDEO' && attachment.thumbnailUri) {
+              files.push({
+                uri: attachment.thumbnailUri,
+                type: 'image/jpeg',
+                fileName: `thumbnail_${attachment.fileName?.replace(/\.mp4$/i, '.jpg') || `thumbnail_${Date.now()}.jpg`}`,
+                isThumbnail: true, // Mark as thumbnail for reference
+                videoIndex: index, // Keep reference to parent video
+              });
+            }
           });
           
           console.log(`📤 Uploading ${files.length} attachment(s) for listing ${listingId}...`);
@@ -354,7 +387,7 @@ export default function CreateListingScreen({ navigation }) {
           // The listing is already created, so we'll allow it to succeed
           Alert.alert(
             'Thành công', 
-            'Tin đã được đăng! Tuy nhiên, có lỗi khi tải lên ảnh/video. Bạn có thể chỉnh sửa tin đăng sau.',
+            'Tin đăng thành công và đang được hệ thống kiểm duyệt. Tuy nhiên, có lỗi khi tải lên ảnh/video. Bạn có thể chỉnh sửa tin đăng sau.',
             [
               { text: 'OK', onPress: () => navigation.replace('Home') }
             ]
@@ -366,7 +399,7 @@ export default function CreateListingScreen({ navigation }) {
       }
       
       console.log('=== SUBMIT SUCCESS ===');
-      Alert.alert('Thành công', 'Tin đã được đăng!', [
+      Alert.alert('Thành công', 'Tin đăng thành công và đang được hệ thống kiểm duyệt', [
         { text: 'OK', onPress: () => navigation.replace('Home') }
       ]);
     } catch (error) {
@@ -488,7 +521,7 @@ export default function CreateListingScreen({ navigation }) {
                   ref={(ref) => (inputRefs.current.year = ref)}
                   onFocus={() => handleInputFocus('year')}
                   style={styles.textInput}
-                  placeholder="2021"
+                  placeholder="VD: 2021"
                   placeholderTextColor="#999"
                   value={year}
                   onChangeText={setYear}
@@ -508,7 +541,7 @@ export default function CreateListingScreen({ navigation }) {
                   ref={(ref) => (inputRefs.current.capacity = ref)}
                   onFocus={() => handleInputFocus('capacity')}
                   style={styles.textInput}
-                  placeholder="60"
+                  placeholder="VD: 60"
                   placeholderTextColor="#999"
                   value={capacity}
                   onChangeText={setCapacity}
@@ -764,7 +797,16 @@ export default function CreateListingScreen({ navigation }) {
                       <Image source={{ uri: attachment.uri }} style={styles.attachmentThumbnail} />
                     ) : (
                       <View style={[styles.attachmentThumbnail, styles.videoThumbnail]}>
-                        <Icon name="play-circle" size={32} color="#6200ee" />
+                        {attachment.thumbnailUri ? (
+                          <>
+                            <Image source={{ uri: attachment.thumbnailUri }} style={styles.attachmentThumbnail} />
+                            <View style={styles.videoPlayIconOverlay}>
+                              <Icon name="play-circle" size={32} color="white" />
+                            </View>
+                          </>
+                        ) : (
+                          <Icon name="play-circle" size={32} color="#6200ee" />
+                        )}
                       </View>
                     )}
                     <TouchableOpacity
@@ -821,25 +863,32 @@ export default function CreateListingScreen({ navigation }) {
             </TouchableOpacity>
           </View>
           <ScrollView style={styles.bankList}>
-            {banks.map((bank) => (
-              <TouchableOpacity
-                key={bank.code}
-                style={[
-                  styles.bankItem,
-                  selectedBank?.code === bank.code && styles.bankItemSelected
-                ]}
-                onPress={() => {
-                  setSelectedBank(bank);
-                  setShowBankPicker(false);
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.bankItemText}>{bank.fullName}</Text>
-                {selectedBank?.code === bank.code && (
-                  <Icon name="check" size={20} color="#6200ee" />
-                )}
-              </TouchableOpacity>
-            ))}
+            {loadingBanks ? (
+              <View style={styles.bankLoadingContainer}>
+                <ActivityIndicator size="large" color="#6200ee" />
+                <Text style={styles.bankLoadingText}>Đang tải danh sách ngân hàng...</Text>
+              </View>
+            ) : (
+              banks.map((bank) => (
+                <TouchableOpacity
+                  key={bank.code}
+                  style={[
+                    styles.bankItem,
+                    selectedBank?.code === bank.code && styles.bankItemSelected
+                  ]}
+                  onPress={() => {
+                    setSelectedBank(bank);
+                    setShowBankPicker(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.bankItemText}>{bank.fullName}</Text>
+                  {selectedBank?.code === bank.code && (
+                    <Icon name="check" size={20} color="#6200ee" />
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
           </ScrollView>
         </View>
       </View>
@@ -1201,6 +1250,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#e3f2fd',
+    position: 'relative',
+  },
+  videoPlayIconOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: 12,
   },
   removeAttachmentButton: {
     position: 'absolute',
@@ -1252,5 +1309,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
     flex: 1,
+  },
+  bankLoadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bankLoadingText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
   },
 });

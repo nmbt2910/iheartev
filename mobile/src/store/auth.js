@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { authService } from '../services/authService';
 
-export const useAuth = create((set, get) => ({
+const authStore = create((set, get) => ({
   token: null,
   role: null,
   isAuthenticated: false,
@@ -44,6 +44,7 @@ export const useAuth = create((set, get) => ({
     await AsyncStorage.setItem('role', role ? String(role) : '');
     // Don't validate immediately after save - trust the token is valid since we just got it
     set({ token, role, isAuthenticated: !!token });
+    console.log('[Auth Store] Token and role saved to AsyncStorage and state');
   },
   async signOut() {
     await AsyncStorage.multiRemove(['token', 'role']);
@@ -68,4 +69,10 @@ export const useAuth = create((set, get) => ({
   },
 }));
 
+// Export the store instance for direct access (e.g., from API interceptor)
+export const useAuth = authStore;
 
+// Export a function to clear auth state (for use in API interceptor without circular dependency)
+export const clearAuthState = () => {
+  authStore.getState().signOut();
+};

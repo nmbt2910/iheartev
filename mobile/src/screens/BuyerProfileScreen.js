@@ -1,56 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
-import { sellerService } from '../services/sellerService';
-import { attachmentService } from '../services/attachmentService';
+import { buyerService } from '../services/buyerService';
 import { formatVND } from '../utils/currencyFormatter';
 
-export default function SellerProfileScreen({ route, navigation }) {
-  const { sellerId } = route.params;
+export default function BuyerProfileScreen({ route, navigation }) {
+  const { buyerId } = route.params;
   const [profile, setProfile] = useState(null);
-  const [currentListings, setCurrentListings] = useState([]);
-  const [soldListings, setSoldListings] = useState([]);
-  const [listingImages, setListingImages] = useState({});
+  const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview'); // overview, listings, sold
+  const [activeTab, setActiveTab] = useState('overview'); // overview, purchases, reviews
 
   useEffect(() => {
-    loadSellerProfile();
-  }, [sellerId]);
+    loadBuyerProfile();
+  }, [buyerId]);
 
-  const loadSellerProfile = async () => {
+  const loadBuyerProfile = async () => {
     try {
       setLoading(true);
-      const profileData = await sellerService.getSellerProfile(sellerId);
+      const profileData = await buyerService.getBuyerProfile(buyerId);
       setProfile(profileData);
-      // Extract listings from profile data
-      const active = profileData.activeListings || [];
-      const sold = profileData.soldListings || [];
-      setCurrentListings(active);
-      setSoldListings(sold);
-      
-      // Load images for all listings
-      const allListings = [...active, ...sold];
-      const imagesMap = {};
-      await Promise.all(
-        allListings.map(async (listing) => {
-          try {
-            const attachments = await attachmentService.getAttachmentsByListing(listing.id);
-            const imageAttachment = attachments.find(a => a.type === 'IMAGE');
-            if (imageAttachment) {
-              imagesMap[listing.id] = attachmentService.getAttachmentUrl(imageAttachment.id);
-            }
-          } catch (error) {
-            console.error(`Error loading image for listing ${listing.id}:`, error);
-          }
-        })
-      );
-      setListingImages(imagesMap);
+      setPurchases(profileData.successfulPurchases || []);
     } catch (error) {
-      console.error('Error loading seller profile:', error);
-      Alert.alert('Lỗi', 'Không thể tải thông tin người bán');
+      console.error('Error loading buyer profile:', error);
+      Alert.alert('Lỗi', 'Không thể tải thông tin người mua');
       navigation.goBack();
     } finally {
       setLoading(false);
@@ -92,17 +67,14 @@ export default function SellerProfileScreen({ route, navigation }) {
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
         <View style={styles.loadingContainer}>
-          <Text style={styles.errorText}>Không tìm thấy thông tin người bán</Text>
+          <Text style={styles.errorText}>Không tìm thấy thông tin người mua</Text>
         </View>
       </SafeAreaView>
     );
   }
 
-  const { seller, averageRating, totalReviews, reviews: recentReviews } = profile;
-  
-  // Calculate counts from actual data
-  const currentCount = currentListings.length;
-  const soldCount = soldListings.length;
+  const { buyer, averageRating, totalReviews, reviews: recentReviews } = profile;
+  const purchaseCount = purchases.length;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -113,7 +85,7 @@ export default function SellerProfileScreen({ route, navigation }) {
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
             <Icon name="arrow-left" size={24} color="white" />
           </TouchableOpacity>
-          <Text style={styles.heroTitle}>Hồ sơ người bán</Text>
+          <Text style={styles.heroTitle}>Hồ sơ người mua</Text>
           <View style={styles.backButtonSpacer} />
         </View>
 
@@ -129,7 +101,7 @@ export default function SellerProfileScreen({ route, navigation }) {
                 <Icon name="account-circle" size={80} color="#6200ee" />
               </View>
             </View>
-            <Text style={styles.sellerName}>{seller.fullName || 'Người bán'}</Text>
+            <Text style={styles.buyerName}>{buyer.fullName || 'Người mua'}</Text>
             <View style={styles.ratingSection}>
               <View style={styles.starsContainer}>
                 {renderStars(averageRating || 0)}
@@ -158,31 +130,31 @@ export default function SellerProfileScreen({ route, navigation }) {
               </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tab, activeTab === 'listings' && styles.tabActive]}
-            onPress={() => setActiveTab('listings')}
+            style={[styles.tab, activeTab === 'purchases' && styles.tabActive]}
+            onPress={() => setActiveTab('purchases')}
             activeOpacity={0.7}
           >
               <Icon 
-                name="car-multiple" 
+                name="shopping" 
                 size={18} 
-                color={activeTab === 'listings' ? '#6200ee' : '#999'} 
+                color={activeTab === 'purchases' ? '#6200ee' : '#999'} 
               />
-              <Text style={[styles.tabText, activeTab === 'listings' && styles.tabTextActive]}>
-                Đang bán ({currentCount})
+              <Text style={[styles.tabText, activeTab === 'purchases' && styles.tabTextActive]}>
+                Đã mua ({purchaseCount})
               </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tab, activeTab === 'sold' && styles.tabActive]}
-            onPress={() => setActiveTab('sold')}
+            style={[styles.tab, activeTab === 'reviews' && styles.tabActive]}
+            onPress={() => setActiveTab('reviews')}
             activeOpacity={0.7}
           >
               <Icon 
-                name="check-circle" 
+                name="star" 
                 size={18} 
-                color={activeTab === 'sold' ? '#6200ee' : '#999'} 
+                color={activeTab === 'reviews' ? '#6200ee' : '#999'} 
               />
-              <Text style={[styles.tabText, activeTab === 'sold' && styles.tabTextActive]}>
-                Đã bán ({soldCount})
+              <Text style={[styles.tabText, activeTab === 'reviews' && styles.tabTextActive]}>
+                Đánh giá ({totalReviews || 0})
               </Text>
           </TouchableOpacity>
         </View>
@@ -191,28 +163,21 @@ export default function SellerProfileScreen({ route, navigation }) {
             <>
               {/* Statistics Cards */}
               <View style={styles.statsGrid}>
-                <View style={[styles.statCard, styles.statCardPrimary]}>
-                  <View style={styles.statIconContainer}>
-                    <Icon name="car-sport" size={28} color="#6200ee" />
-                  </View>
-                  <Text style={styles.statValue}>{currentCount}</Text>
-                  <Text style={styles.statLabel}>Tin đang bán</Text>
-                </View>
                 <View style={[styles.statCard, styles.statCardSuccess]}>
                   <View style={styles.statIconContainer}>
                     <Icon name="check-circle" size={28} color="#4caf50" />
-                      </View>
-                  <Text style={styles.statValue}>{soldCount}</Text>
-                  <Text style={styles.statLabel}>Đã bán</Text>
-                    </View>
+                  </View>
+                  <Text style={styles.statValue}>{purchaseCount}</Text>
+                  <Text style={styles.statLabel}>Đã mua</Text>
+                </View>
                 <View style={[styles.statCard, styles.statCardWarning]}>
                   <View style={styles.statIconContainer}>
                     <Icon name="star" size={28} color="#ff9800" />
                   </View>
                   <Text style={styles.statValue}>{totalReviews || 0}</Text>
                   <Text style={styles.statLabel}>Đánh giá</Text>
-                  </View>
                 </View>
+              </View>
                 
               {/* Contact Info Card */}
               <View style={styles.card}>
@@ -227,17 +192,17 @@ export default function SellerProfileScreen({ route, navigation }) {
                     </View>
                     <View style={styles.contactTextContainer}>
                       <Text style={styles.contactLabel}>Email</Text>
-                      <Text style={styles.contactText}>{seller.email || 'Không có'}</Text>
+                      <Text style={styles.contactText}>{buyer.email || 'Không có'}</Text>
                     </View>
                   </View>
-                  {seller.phone && (
+                  {buyer.phone && (
                     <View style={styles.contactRow}>
                       <View style={styles.contactIconContainer}>
                         <Icon name="phone" size={20} color="#6200ee" />
                       </View>
                       <View style={styles.contactTextContainer}>
                         <Text style={styles.contactLabel}>Số điện thoại</Text>
-                      <Text style={styles.contactText}>{seller.phone}</Text>
+                      <Text style={styles.contactText}>{buyer.phone}</Text>
                       </View>
                     </View>
                   )}
@@ -250,13 +215,6 @@ export default function SellerProfileScreen({ route, navigation }) {
                   <View style={styles.sectionHeader}>
                     <Icon name="star-circle" size={22} color="#6200ee" />
                     <Text style={styles.sectionTitle}>Đánh giá gần đây</Text>
-                    <TouchableOpacity
-                      onPress={() => navigation.navigate('SellerRatings', { sellerId })}
-                      style={styles.viewAllButton}
-                    >
-                      <Text style={styles.viewAllText}>Xem tất cả</Text>
-                      <Icon name="chevron-right" size={20} color="#6200ee" />
-                    </TouchableOpacity>
                   </View>
                   {recentReviews.map((review, index) => (
                     <View 
@@ -315,122 +273,100 @@ export default function SellerProfileScreen({ route, navigation }) {
             </>
           )}
 
-          {activeTab === 'listings' && (
-            <View style={styles.listingsContainer}>
-              {currentListings.length === 0 ? (
+          {activeTab === 'purchases' && (
+            <View style={styles.purchasesContainer}>
+              {purchases.length === 0 ? (
                 <View style={styles.emptyCard}>
-                  <Icon name="car-outline" size={80} color="#ccc" />
-                  <Text style={styles.emptyTitle}>Chưa có tin đang bán</Text>
-                  <Text style={styles.emptySubtitle}>Người bán này chưa có tin đăng nào đang hoạt động</Text>
+                  <Icon name="shopping-outline" size={80} color="#ccc" />
+                  <Text style={styles.emptyTitle}>Chưa có đơn hàng nào</Text>
+                  <Text style={styles.emptySubtitle}>Người mua này chưa có đơn hàng thành công nào</Text>
                 </View>
               ) : (
-                currentListings.map((listing) => {
-                  const imageUrl = listingImages[listing.id];
-                  return (
+                purchases.map((purchase) => (
                   <TouchableOpacity
-                    key={listing.id}
-                    style={styles.listingCard}
-                    onPress={() => navigation.navigate('ListingDetail', { id: listing.id })}
+                    key={purchase.id}
+                    style={styles.purchaseCard}
+                    onPress={() => navigation.navigate('OrderDetail', { orderId: purchase.id })}
                     activeOpacity={0.7}
                   >
-                      <View style={styles.listingImageContainer}>
-                        {imageUrl ? (
-                          <Image 
-                            source={{ uri: imageUrl }} 
-                            style={styles.listingImage} 
-                            resizeMode="cover" 
-                          />
-                        ) : (
-                          <View style={styles.listingImagePlaceholder}>
-                            <Icon name="car-electric" size={50} color="#bbb" />
-                          </View>
-                        )}
+                    <View style={styles.purchaseHeader}>
+                      <View style={styles.purchaseIconContainer}>
+                        <Icon name="receipt" size={24} color="#6200ee" />
                       </View>
-                      <View style={styles.listingContent}>
-                        <Text style={styles.listingTitle} numberOfLines={1}>
-                          {listing.brand} {listing.model}
+                      <View style={styles.purchaseInfo}>
+                        <Text style={styles.purchaseTitle} numberOfLines={1}>
+                          {purchase.listing?.brand} {purchase.listing?.model} {purchase.listing?.year}
                         </Text>
-                        <View style={styles.listingDetails}>
-                          <View style={styles.listingDetailItem}>
-                            <Icon name="calendar" size={14} color="#666" />
-                            <Text style={styles.listingDetailText}>{listing.year || 'N/A'}</Text>
-                          </View>
-                          <View style={styles.listingDetailItem}>
-                            <Icon name="battery" size={14} color="#666" />
-                            <Text style={styles.listingDetailText}>
-                              {listing.batteryCapacityKWh || '-'} kWh
-                            </Text>
-                          </View>
-                        </View>
-                      <Text style={styles.listingPrice}>{formatVND(listing.price)}</Text>
+                        <Text style={styles.purchaseAmount}>
+                          {formatVND(purchase.amount || 0)}
+                        </Text>
+                      </View>
+                      <Icon name="chevron-right" size={20} color="#999" />
                     </View>
+                    {purchase.closedAt && (
+                      <Text style={styles.purchaseDate}>
+                        Hoàn thành: {new Date(purchase.closedAt).toLocaleDateString('vi-VN')}
+                      </Text>
+                    )}
                   </TouchableOpacity>
-                  );
-                })
+                ))
               )}
             </View>
           )}
 
-          {activeTab === 'sold' && (
-            <View style={styles.listingsContainer}>
-              {soldListings.length === 0 ? (
-                <View style={styles.emptyCard}>
-                  <Icon name="check-circle-outline" size={80} color="#ccc" />
-                  <Text style={styles.emptyTitle}>Chưa có tin đã bán</Text>
-                  <Text style={styles.emptySubtitle}>Người bán này chưa có tin đăng nào đã bán</Text>
-                </View>
-              ) : (
-                soldListings.map((listing) => {
-                  const imageUrl = listingImages[listing.id];
-                  return (
-                  <TouchableOpacity
-                    key={listing.id}
-                    style={styles.listingCard}
-                    onPress={() => navigation.navigate('ListingDetail', { id: listing.id })}
-                    activeOpacity={0.7}
+          {activeTab === 'reviews' && (
+            <View style={styles.reviewsContainer}>
+              {recentReviews && recentReviews.length > 0 ? (
+                recentReviews.map((review, index) => (
+                  <View 
+                    key={review.id || index} 
+                    style={[
+                      styles.reviewCard,
+                      index === recentReviews.length - 1 && styles.reviewCardLast
+                    ]}
                   >
-                      <View style={styles.listingImageContainer}>
-                        {imageUrl ? (
-                          <Image 
-                            source={{ uri: imageUrl }} 
-                            style={styles.listingImage} 
-                            resizeMode="cover" 
-                          />
-                        ) : (
-                          <View style={styles.listingImagePlaceholder}>
-                            <Icon name="car-electric" size={50} color="#bbb" />
-                          </View>
-                        )}
-                      </View>
-                      <View style={styles.listingContent}>
-                        <View style={styles.titleRow}>
-                          <Text style={styles.listingTitle} numberOfLines={1} ellipsizeMode="tail">
-                            {listing.brand} {listing.model}
-                          </Text>
-                          <View style={styles.soldBadgeContainer}>
-                            <Icon name="check-circle" size={16} color="#4caf50" />
-                            <Text style={styles.soldBadge}>Đã bán</Text>
-                          </View>
+                    <View style={styles.reviewHeader}>
+                      <View style={styles.reviewerInfo}>
+                        <View style={styles.reviewerAvatar}>
+                          <Icon name="account" size={20} color="#666" />
                         </View>
-                        <View style={styles.listingDetails}>
-                          <View style={styles.listingDetailItem}>
-                            <Icon name="calendar" size={14} color="#666" />
-                            <Text style={styles.listingDetailText}>{listing.year || 'N/A'}</Text>
-                          </View>
-                          <View style={styles.listingDetailItem}>
-                            <Icon name="battery" size={14} color="#666" />
-                            <Text style={styles.listingDetailText}>
-                              {listing.batteryCapacityKWh || '-'} kWh
-                            </Text>
-                          </View>
-                    </View>
-                        <Text style={[styles.listingPrice, styles.soldPrice]}>
-                          {formatVND(listing.price)}
-                    </Text>
+                        <Text style={styles.reviewerName}>
+                          {review.reviewer?.fullName || 'Người dùng'}
+                        </Text>
                       </View>
-                  </TouchableOpacity>
-                  );
-                })
+                      <View style={styles.reviewStars}>
+                        {renderStars(review.rating || 0)}
+                      </View>
+                    </View>
+                    {review.comment && (
+                      <Text style={styles.reviewComment}>{review.comment}</Text>
+                    )}
+                    {review.order && (
+                      <TouchableOpacity
+                        style={styles.orderInfoContainer}
+                        onPress={() => navigation.navigate('OrderDetail', { orderId: review.order.id })}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.orderInfoHeader}>
+                          <Icon name="receipt" size={16} color="#6200ee" />
+                          <Text style={styles.orderInfoLabel}>Đơn hàng:</Text>
+                        </View>
+                        <Text style={styles.orderInfoText} numberOfLines={1}>
+                          {review.order.listing?.brand} {review.order.listing?.model} {review.order.listing?.year}
+                        </Text>
+                        <Text style={styles.orderInfoSubtext}>
+                          Số tiền: {formatVND(review.order.amount || 0)}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))
+              ) : (
+                <View style={styles.emptyCard}>
+                  <Icon name="star-outline" size={80} color="#ccc" />
+                  <Text style={styles.emptyTitle}>Chưa có đánh giá</Text>
+                  <Text style={styles.emptySubtitle}>Người mua này chưa nhận được đánh giá nào</Text>
+                </View>
               )}
             </View>
           )}
@@ -472,6 +408,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     marginRight: 40,
+  },
+  backButtonSpacer: {
+    width: 40,
   },
   loadingContainer: {
     flex: 1,
@@ -530,7 +469,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
   },
-  sellerName: {
+  buyerName: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#1a1a1a',
@@ -609,10 +548,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     borderWidth: 1,
     borderColor: '#f0f0f0',
-  },
-  statCardPrimary: {
-    borderTopWidth: 3,
-    borderTopColor: '#6200ee',
   },
   statCardSuccess: {
     borderTopWidth: 3,
@@ -698,18 +633,6 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     fontWeight: '500',
   },
-  viewAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-  },
-  viewAllText: {
-    fontSize: 14,
-    color: '#6200ee',
-    fontWeight: '600',
-  },
   reviewItem: {
     paddingBottom: 20,
     marginBottom: 20,
@@ -755,120 +678,6 @@ const styles = StyleSheet.create({
     color: '#666',
     lineHeight: 22,
   },
-  emptyCard: {
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 48,
-    marginHorizontal: 16,
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 20,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  listingsContainer: {
-    gap: 16,
-    paddingHorizontal: 16,
-  },
-  listingCard: {
-    backgroundColor: 'white',
-    borderRadius: 20,
-    overflow: 'hidden',
-    flexDirection: 'row',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
-  },
-  listingImageContainer: {
-    width: 140,
-    height: 140,
-    backgroundColor: '#f0f0f0',
-    overflow: 'hidden',
-  },
-  listingImage: {
-    width: '100%',
-    height: '100%',
-  },
-  listingImagePlaceholder: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#e8e8e8',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  listingContent: {
-    flex: 1,
-    padding: 16,
-    justifyContent: 'flex-start',
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  listingTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-    flex: 1,
-  },
-  listingDetails: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 12,
-  },
-  listingDetailItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  listingDetailText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  listingPrice: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#6200ee',
-  },
-  soldBadgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#e8f5e9',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    flexShrink: 0,
-  },
-  soldBadge: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#4caf50',
-  },
-  soldPrice: {
-    color: '#999',
-    textDecorationLine: 'line-through',
-  },
   orderInfoContainer: {
     marginTop: 12,
     padding: 12,
@@ -898,4 +707,104 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
   },
+  emptyCard: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 48,
+    marginHorizontal: 16,
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 16,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  purchasesContainer: {
+    gap: 12,
+    paddingHorizontal: 16,
+  },
+  purchaseCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  purchaseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  purchaseIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f3f0ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  purchaseInfo: {
+    flex: 1,
+  },
+  purchaseTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    marginBottom: 4,
+  },
+  purchaseAmount: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#6200ee',
+  },
+  purchaseDate: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  reviewsContainer: {
+    gap: 16,
+    paddingHorizontal: 16,
+  },
+  reviewCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  reviewCardLast: {
+    marginBottom: 0,
+  },
 });
+

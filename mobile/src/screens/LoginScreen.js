@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Alert, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../store/auth';
 import { authService } from '../services/authService';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
@@ -24,7 +25,25 @@ export default function LoginScreen({ navigation }) {
     setError('');
     try {
       const data = await authService.login(email, password);
+      
+      if (!data.token) {
+        throw new Error('Không nhận được token từ server');
+      }
+      
+      // Save token to auth store (token already stored in AsyncStorage by authService)
       await save(data.token, data.role);
+      console.log('[Login Screen] Token saved to AsyncStorage and auth store');
+      
+      // Verify token is stored correctly by checking AsyncStorage
+      const storedToken = await AsyncStorage.getItem('token');
+      if (storedToken === data.token) {
+        console.log('[Login Screen] Token verified in AsyncStorage');
+      } else {
+        console.warn('[Login Screen] Token mismatch in AsyncStorage, re-saving...');
+        await save(data.token, data.role);
+      }
+      
+      // Navigate to home immediately after successful login
       navigation.replace('Home');
     } catch (e) {
       if (e.sessionExpired) {

@@ -11,6 +11,11 @@ export const reviewService = {
     return response.data;
   },
 
+  async getReview(reviewId) {
+    const response = await api.get(`/api/reviews/${reviewId}`);
+    return response.data;
+  },
+
   async deleteReview(reviewId) {
     await api.delete(`/api/reviews/${reviewId}`);
   },

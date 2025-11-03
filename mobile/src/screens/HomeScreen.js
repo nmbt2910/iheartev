@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,9 +21,9 @@ export default function HomeScreen({ navigation }) {
   const [filtersApplied, setFiltersApplied] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const favorites = useFavorites((state) => state.favorites);
-  const { checkFavorite, loadFavoritesForListings, toggleFavorite } = useFavorites();
+  const { loadFavoritesForListings, toggleFavorite } = useFavorites();
   
   const isFavorite = (listingId) => favorites.has(listingId);
   
@@ -60,15 +60,18 @@ export default function HomeScreen({ navigation }) {
       setItems(listings);
       
       // Load favorite status asynchronously after setting items for faster UI update
+      // Use batch loading to avoid multiple API calls
       if (isAuthenticated && token && listings.length > 0) {
         const listingIds = listings.map(l => l.id).filter(Boolean);
-        // Don't await - let it load in background for better perceived performance
-        loadFavoritesForListings(listingIds).catch((error) => {
-          // Silently handle favorite check errors (user might not be authenticated yet)
-          if (error.response?.status !== 401 && error.response?.status !== 403) {
-            console.error('Error loading favorites:', error);
-          }
-        });
+        if (listingIds.length > 0) {
+          // Don't await - let it load in background for better perceived performance
+          loadFavoritesForListings(listingIds).catch((error) => {
+            // Silently handle favorite check errors (user might not be authenticated yet)
+            if (error.response?.status !== 401 && error.response?.status !== 403) {
+              console.error('Error loading favorites:', error);
+            }
+          });
+        }
       }
     } catch (error) {
       if (error.sessionExpired) {
@@ -93,6 +96,13 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => { 
     loadListings(); 
   }, [searchQuery, filtersApplied]);
+
+  // Reload listings when screen comes into focus to show new listings
+  useFocusEffect(
+    React.useCallback(() => {
+      loadListings();
+    }, [searchQuery, filtersApplied])
+  );
 
   // Don't reload auth state on mount - it's already loaded by App.js
   // This prevents double validation which can cause issues
@@ -309,11 +319,16 @@ export default function HomeScreen({ navigation }) {
 
         <View style={styles.resultsHeader}>
           <Text style={styles.resultsCount}>
-            {loading && searchQuery ? 'Đang tìm kiếm...' : `Tìm thấy ${items.length} xe`}
+            {loading && !refreshing ? 'Đang tải...' : loading && searchQuery ? 'Đang tìm kiếm...' : `Tìm thấy ${items.length} xe`}
           </Text>
         </View>
 
-        {items.length === 0 ? (
+        {loading && !refreshing && items.length === 0 ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#6200ee" />
+            <Text style={styles.loadingText}>Đang tải danh sách xe...</Text>
+          </View>
+        ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Icon name="car-off" size={64} color="#ccc" />
             <Text style={styles.emptyText}>Không tìm thấy xe nào</Text>
@@ -348,17 +363,11 @@ export default function HomeScreen({ navigation }) {
                         e.stopPropagation();
                         const wasFavorite = favorited;
                         try {
-                          // Optimistically update UI
+                          // toggleFavorite already updates the store state
                           await toggleFavorite(item.id);
-                          // Immediately refresh from server to ensure sync
-                          await checkFavorite(item.id);
                         } catch (error) {
                           if (!error.sessionExpired) {
                             console.error('Error toggling favorite:', error);
-                            // Revert optimistic update on error
-                            if (wasFavorite) {
-                              await checkFavorite(item.id);
-                            }
                           }
                         }
                       }}
@@ -381,7 +390,9 @@ export default function HomeScreen({ navigation }) {
                     <Text style={styles.cardPrice}>{formatVND(item.price)}</Text>
                     {item.conditionLabel && (
                       <View style={styles.conditionBadge}>
-                        <Text style={styles.conditionText}>{item.conditionLabel}</Text>
+                        <Text style={styles.conditionText}>
+                          {item.conditionLabel === 'used' ? 'Qua sử dụng' : item.conditionLabel}
+                        </Text>
                       </View>
                     )}
                   </View>
@@ -752,5 +763,17 @@ const styles = StyleSheet.create({
   },
   fabRight: {
     right: 20,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 32,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
   },
 });

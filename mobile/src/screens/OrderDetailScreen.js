@@ -3,10 +3,11 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Alert,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
+import QRCode from 'react-native-qrcode-svg';
 import { useAuth } from '../store/auth';
 import { orderService } from '../services/orderService';
 import { formatVND } from '../utils/currencyFormatter';
-// QR Code will be generated on backend or use expo-camera for scanning
+import { generateVietQR } from '../utils/vietqrGenerator';
 
 export default function OrderDetailScreen({ route, navigation }) {
   const { orderId } = route.params;
@@ -14,6 +15,7 @@ export default function OrderDetailScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [aiInsights, setAiInsights] = useState(null);
   const [loadingAI, setLoadingAI] = useState(false);
+  const [aiError, setAiError] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [showPaymentQR, setShowPaymentQR] = useState(false);
@@ -29,11 +31,17 @@ export default function OrderDetailScreen({ route, navigation }) {
       setLoading(true);
       const data = await orderService.getOrderDetail(orderId);
       setOrderDetail(data);
-      
-      // Load AI insights if order is pending or paid
-      if (data.order && (data.order.status === 'PENDING' || data.order.status === 'PAID')) {
-        loadAIInsights();
+      // Log for debugging
+      if (data?.order) {
+        console.log('Order review IDs:', {
+          buyerReviewId: data.order.buyerReviewId,
+          sellerReviewId: data.order.sellerReviewId,
+          status: data.order.status,
+          isBuyer: data.isBuyer,
+          isSeller: data.isSeller
+        });
       }
+      // Removed automatic AI insights loading - now only loads when user clicks button
     } catch (error) {
       console.error('Error loading order detail:', error);
       Alert.alert('Lỗi', 'Không thể tải thông tin đơn hàng');
@@ -44,12 +52,23 @@ export default function OrderDetailScreen({ route, navigation }) {
   };
 
   const loadAIInsights = async () => {
+    setLoadingAI(true);
+    setAiError(null);
     try {
-      setLoadingAI(true);
       const insights = await orderService.getAIInsights(orderId);
       setAiInsights(insights);
     } catch (error) {
+      setAiError('Không thể tải phân tích AI. Vui lòng thử lại.');
       console.error('Error loading AI insights:', error);
+      // Log more details about the error
+      if (error.response) {
+        console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+      } else if (error.request) {
+        console.error('Request made but no response received:', error.request);
+      } else {
+        console.error('Error setting up request:', error.message);
+      }
     } finally {
       setLoadingAI(false);
     }
@@ -126,7 +145,36 @@ export default function OrderDetailScreen({ route, navigation }) {
               setProcessing(true);
               await orderService.confirmReceived(orderId);
               await loadOrderDetail();
-              Alert.alert('Thành công', 'Đơn hàng đã được đóng. Người mua có thể để lại đánh giá.');
+              
+              // Reload order detail to get updated order with buyer info
+              const updatedData = await orderService.getOrderDetail(orderId);
+              const updatedOrder = updatedData?.order;
+              const updatedBuyer = updatedData?.buyer;
+              
+              // Prompt seller to rate buyer
+              if (updatedOrder && updatedOrder.status === 'CLOSED' && !updatedOrder.sellerReviewId && updatedBuyer) {
+                Alert.alert(
+                  'Thành công', 
+                  'Đơn hàng đã được đóng. Bạn có muốn đánh giá người mua ngay bây giờ không?',
+                  [
+                    { 
+                      text: 'Để sau', 
+                      style: 'cancel' 
+                    },
+                    {
+                      text: 'Đánh giá ngay',
+                      onPress: () => {
+                        navigation.navigate('CreateReview', {
+                          orderId: orderId,
+                          buyerId: updatedBuyer.id
+                        });
+                      }
+                    }
+                  ]
+                );
+              } else {
+                Alert.alert('Thành công', 'Đơn hàng đã được đóng. Người mua có thể để lại đánh giá.');
+              }
             } catch (error) {
               Alert.alert('Lỗi', error.response?.data?.error || 'Không thể xác nhận nhận tiền');
             } finally {
@@ -143,8 +191,19 @@ export default function OrderDetailScreen({ route, navigation }) {
       return '';
     }
     const { bankCode, accountNumber, amount, transactionContent } = orderDetail.paymentInfo;
-    // VietQR format: bankCode|accountNumber|amount|transactionContent
-    return `${bankCode}|${accountNumber}|${amount}|${transactionContent}`;
+    try {
+      // Generate proper VietQR EMV format
+      return generateVietQR(
+        bankCode,
+        accountNumber,
+        amount || null,
+        transactionContent || ''
+      );
+    } catch (error) {
+      console.error('Error generating VietQR:', error);
+      // Fallback to simple format if generation fails
+      return `${bankCode}|${accountNumber}|${amount}|${transactionContent}`;
+    }
   };
 
   if (loading) {
@@ -208,6 +267,7 @@ export default function OrderDetailScreen({ route, navigation }) {
                 {order.status === 'CLOSED' ? 'Đã hoàn thành' :
                  order.status === 'CANCELLED' ? 'Đã hủy' :
                  order.status === 'PAID' ? 'Đã thanh toán' :
+                 order.buyerPaymentConfirmed ? 'Đã xác nhận thanh toán' :
                  'Đang chờ'}
               </Text>
             </View>
@@ -247,33 +307,66 @@ export default function OrderDetailScreen({ route, navigation }) {
             </View>
           </View>
 
-          {/* Seller Information */}
+          {/* Seller/Buyer Information */}
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
               <Icon name="account-circle" size={20} color="#6200ee" />
-              <Text style={styles.sectionTitle}>Thông tin người bán</Text>
+              <Text style={styles.sectionTitle}>
+                {isSeller ? 'Thông tin người mua' : 'Thông tin người bán'}
+              </Text>
             </View>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('SellerProfile', { sellerId: seller.id })}
-              activeOpacity={0.7}
-            >
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Tên:</Text>
-                <View style={styles.infoValueRow}>
-                  <Text style={styles.infoValue}>{seller.fullName}</Text>
-                  <Icon name="chevron-right" size={20} color="#999" />
+            {isSeller ? (
+              // Show buyer information when user is the seller
+              <>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('BuyerProfile', { buyerId: buyer.id })}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Tên:</Text>
+                    <View style={styles.infoValueRow}>
+                      <Text style={styles.infoValue}>{buyer.fullName || 'N/A'}</Text>
+                      <Icon name="chevron-right" size={20} color="#999" />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Email:</Text>
+                  <Text style={styles.infoValue}>{buyer.email}</Text>
                 </View>
-              </View>
-            </TouchableOpacity>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Email:</Text>
-              <Text style={styles.infoValue}>{seller.email}</Text>
-            </View>
-            {seller.phone && (
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Điện thoại:</Text>
-                <Text style={styles.infoValue}>{seller.phone}</Text>
-              </View>
+                {buyer.phone && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Điện thoại:</Text>
+                    <Text style={styles.infoValue}>{buyer.phone}</Text>
+                  </View>
+                )}
+              </>
+            ) : (
+              // Show seller information when user is the buyer
+              <>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('SellerProfile', { sellerId: seller.id })}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Tên:</Text>
+                    <View style={styles.infoValueRow}>
+                      <Text style={styles.infoValue}>{seller.fullName}</Text>
+                      <Icon name="chevron-right" size={20} color="#999" />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Email:</Text>
+                  <Text style={styles.infoValue}>{seller.email}</Text>
+                </View>
+                {seller.phone && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>Điện thoại:</Text>
+                    <Text style={styles.infoValue}>{seller.phone}</Text>
+                  </View>
+                )}
+              </>
             )}
           </View>
 
@@ -337,42 +430,83 @@ export default function OrderDetailScreen({ route, navigation }) {
           )}
 
           {/* AI Insights */}
-          {loadingAI ? (
+          {(order.status === 'PENDING' || order.status === 'PAID') && (
             <View style={styles.card}>
-              <View style={styles.sectionHeader}>
-                <Icon name="robot" size={20} color="#ff9800" />
-                <Text style={styles.sectionTitle}>Phân tích AI</Text>
+              <View style={styles.aiHeader}>
+                <View style={styles.aiHeaderIcon}>
+                  <Icon name="robot" size={24} color="#6200ee" />
+                </View>
+                <View style={styles.aiHeaderText}>
+                  <Text style={styles.sectionTitle}>Phân tích AI</Text>
+                </View>
+                {aiInsights && (
+                  <TouchableOpacity
+                    onPress={loadAIInsights}
+                    style={styles.aiRefreshIconButton}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="refresh" size={20} color="#6200ee" />
+                  </TouchableOpacity>
+                )}
               </View>
-              <View style={styles.loadingAIContainer}>
-                <ActivityIndicator size="small" color="#6200ee" />
-                <Text style={styles.loadingAIText}>Đang phân tích...</Text>
-              </View>
-            </View>
-          ) : aiInsights && (
-            <View style={styles.card}>
-              <View style={styles.sectionHeader}>
-                <Icon name="robot" size={22} color="#ff9800" />
-                <Text style={styles.sectionTitle}>Phân tích AI</Text>
-              </View>
-              <View style={styles.aiInsightsContainer}>
-                <Text style={styles.aiInsightsText}>{aiInsights.insights}</Text>
-              </View>
-              {aiInsights.sellerStats && (
-                <View style={styles.statsBox}>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>
-                      {aiInsights.sellerStats.averageRating ? aiInsights.sellerStats.averageRating.toFixed(1) : '0.0'}
-                    </Text>
-                    <Text style={styles.statLabel}>Đánh giá TB</Text>
+
+              {loadingAI ? (
+                <View style={styles.aiLoadingContainer}>
+                  <View style={styles.aiLoadingIndicator}>
+                    <Icon name="robot" size={32} color="#6200ee" />
                   </View>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{aiInsights.sellerStats.totalReviews || 0}</Text>
-                    <Text style={styles.statLabel}>Đánh giá</Text>
+                  <Text style={styles.aiLoadingText}>AI đang phân tích...</Text>
+                  <Text style={styles.aiLoadingSubtext}>Vui lòng đợi một chút</Text>
+                </View>
+              ) : aiError ? (
+                <View style={styles.aiErrorContainer}>
+                  <Icon name="alert-circle" size={32} color="#d32f2f" />
+                  <Text style={styles.aiErrorText}>{aiError}</Text>
+                  <TouchableOpacity
+                    onPress={loadAIInsights}
+                    style={styles.aiRetryButton}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="refresh" size={18} color="white" />
+                    <Text style={styles.aiRetryButtonText}>Thử lại</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : aiInsights ? (
+                <View>
+                  <View style={styles.aiInsightsContainer}>
+                    <Text style={styles.aiInsightsText}>{aiInsights.insights}</Text>
                   </View>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{aiInsights.sellerStats.soldListings || 0}</Text>
-                    <Text style={styles.statLabel}>Đã bán</Text>
-                  </View>
+                  {aiInsights.sellerStats && (
+                    <View style={styles.statsBox}>
+                      <View style={styles.statItem}>
+                        <Text style={styles.statValue}>
+                          {aiInsights.sellerStats.averageRating ? aiInsights.sellerStats.averageRating.toFixed(1) : '0.0'}
+                        </Text>
+                        <Text style={styles.statLabel}>Đánh giá TB</Text>
+                      </View>
+                      <View style={styles.statItem}>
+                        <Text style={styles.statValue}>{aiInsights.sellerStats.totalReviews || 0}</Text>
+                        <Text style={styles.statLabel}>Đánh giá</Text>
+                      </View>
+                      <View style={styles.statItem}>
+                        <Text style={styles.statValue}>{aiInsights.sellerStats.soldListings || 0}</Text>
+                        <Text style={styles.statLabel}>Đã bán</Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <View style={styles.aiPromptContainer}>
+                  <Icon name="robot-outline" size={48} color="#ccc" />
+                  <Text style={styles.aiPromptText}>Nhấn để xem phân tích AI</Text>
+                  <TouchableOpacity
+                    onPress={loadAIInsights}
+                    style={styles.aiLoadButton}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="robot" size={20} color="white" />
+                    <Text style={styles.aiLoadButtonText}>Xem phân tích AI</Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </View>
@@ -382,7 +516,7 @@ export default function OrderDetailScreen({ route, navigation }) {
           {(order.status === 'PENDING' || order.status === 'PAID' || order.status === 'CLOSED') && (
             <View style={styles.actionsCard}>
               {/* Buyer Actions */}
-              {isBuyer && order.status === 'PENDING' && (
+              {isBuyer && order.status === 'PENDING' && !order.buyerPaymentConfirmed && (
                 <>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.confirmButton]}
@@ -405,6 +539,16 @@ export default function OrderDetailScreen({ route, navigation }) {
                 </>
               )}
               
+              {/* Buyer - Payment Confirmed, waiting for seller */}
+              {isBuyer && order.status === 'PENDING' && order.buyerPaymentConfirmed && (
+                <View style={styles.statusMessageContainer}>
+                  <Icon name="check-circle" size={24} color="#4caf50" />
+                  <Text style={styles.statusMessageText}>
+                    Bạn đã xác nhận thanh toán. Đang chờ người bán xác nhận nhận tiền.
+                  </Text>
+                </View>
+              )}
+              
               {/* Seller Actions - PENDING */}
               {isSeller && order.status === 'PENDING' && (
                 <TouchableOpacity
@@ -418,8 +562,8 @@ export default function OrderDetailScreen({ route, navigation }) {
                 </TouchableOpacity>
               )}
               
-              {/* Seller Actions - PAID */}
-              {isSeller && order.status === 'PAID' && order.buyerPaymentConfirmed && (
+              {/* Seller Actions - Buyer has confirmed payment */}
+              {isSeller && order.status === 'PENDING' && order.buyerPaymentConfirmed && (
                 <>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.confirmButton]}
@@ -433,8 +577,25 @@ export default function OrderDetailScreen({ route, navigation }) {
                 </>
               )}
 
-              {/* Buyer Actions - CLOSED (Review) */}
-              {order.status === 'CLOSED' && isBuyer && !order.buyerReviewId && (
+              {/* Seller Actions - CLOSED (Review/Update Buyer) */}
+              {order.status === 'CLOSED' && isSeller && (
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.reviewButton]}
+                  onPress={() => navigation.navigate('CreateReview', { 
+                    orderId: order.id,
+                    buyerId: buyer.id 
+                  })}
+                  activeOpacity={0.8}
+                >
+                  <Icon name={order.sellerReviewId ? "pencil" : "star"} size={20} color="white" />
+                  <Text style={styles.actionButtonText}>
+                    {order.sellerReviewId ? 'Cập nhật đánh giá' : 'Đánh giá người mua'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Buyer Actions - CLOSED (Review/Update Seller) */}
+              {order.status === 'CLOSED' && isBuyer && (
                 <TouchableOpacity
                   style={[styles.actionButton, styles.reviewButton]}
                   onPress={() => navigation.navigate('CreateReview', { 
@@ -443,8 +604,10 @@ export default function OrderDetailScreen({ route, navigation }) {
                   })}
                   activeOpacity={0.8}
                 >
-                  <Icon name="star" size={20} color="white" />
-                  <Text style={styles.actionButtonText}>Để lại đánh giá</Text>
+                  <Icon name={order.buyerReviewId ? "pencil" : "star"} size={20} color="white" />
+                  <Text style={styles.actionButtonText}>
+                    {order.buyerReviewId ? 'Cập nhật đánh giá' : 'Đánh giá người bán'}
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -521,8 +684,12 @@ export default function OrderDetailScreen({ route, navigation }) {
               {qrData && (
                 <>
                   <View style={styles.qrCodeContainer}>
-                    <Icon name="qrcode-scan" size={120} color="#6200ee" />
-                    <Text style={styles.qrDataText}>{qrData}</Text>
+                    <QRCode
+                      value={qrData}
+                      size={200}
+                      color="#6200ee"
+                      backgroundColor="white"
+                    />
                     <Text style={styles.qrInstruction}>
                       Quét mã này bằng ứng dụng ngân hàng để chuyển khoản
                     </Text>
@@ -586,7 +753,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 120,
+    paddingBottom: 16,
   },
   statusCard: {
     backgroundColor: 'white',
@@ -739,6 +906,108 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'justify',
   },
+  aiHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  aiHeaderIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#f3e5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  aiHeaderText: {
+    flex: 1,
+  },
+  aiRefreshIconButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#f3e5f5',
+  },
+  aiLoadingContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  aiLoadingIndicator: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#f3e5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  aiLoadingText: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  aiLoadingSubtext: {
+    fontSize: 14,
+    color: '#999',
+    fontStyle: 'italic',
+  },
+  aiErrorContainer: {
+    paddingVertical: 30,
+    alignItems: 'center',
+  },
+  aiErrorText: {
+    fontSize: 15,
+    color: '#d32f2f',
+    marginTop: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  aiRetryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6200ee',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 14,
+    gap: 8,
+  },
+  aiRetryButtonText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  aiPromptContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  aiPromptText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 16,
+    marginBottom: 24,
+  },
+  aiLoadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#6200ee',
+    paddingVertical: 16,
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    gap: 10,
+    elevation: 0,
+    shadowColor: '#6200ee',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  aiLoadButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   loadingAIContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -752,12 +1021,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   aiInsightsContainer: {
-    backgroundColor: '#fff9e6',
+    backgroundColor: '#f8f4ff',
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
+    borderLeftColor: '#6200ee',
   },
   statsBox: {
     flexDirection: 'row',
@@ -811,6 +1080,23 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  statusMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e8f5e9',
+    padding: 16,
+    borderRadius: 12,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  statusMessageText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#2e7d32',
+    fontWeight: '500',
+    lineHeight: 22,
   },
   modalOverlay: {
     flex: 1,
