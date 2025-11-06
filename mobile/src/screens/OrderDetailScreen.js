@@ -386,7 +386,7 @@ export default function OrderDetailScreen({ route, navigation }) {
               ) : (
                 <View style={styles.paymentInfoBox}>
                   <Icon name="qrcode" size={32} color="#6200ee" />
-                  <Text style={styles.paymentMethodText}>Chuyển khoản VietQR</Text>
+                  <Text style={styles.paymentMethodText}>Thanh toan chuyen khoan</Text>
                   <View style={styles.vietqrDetails}>
                     <View style={styles.infoRow}>
                       <Text style={styles.infoLabel}>Ngân hàng:</Text>
@@ -405,16 +405,6 @@ export default function OrderDetailScreen({ route, navigation }) {
                       <Text style={styles.infoValue}>{paymentInfo.transactionContent}</Text>
                     </View>
                   </View>
-                  {isBuyer && order.status === 'PENDING' && (
-                    <TouchableOpacity
-                      style={styles.qrButton}
-                      onPress={() => setShowPaymentQR(true)}
-                      activeOpacity={0.7}
-                    >
-                      <Icon name="qrcode" size={20} color="white" />
-                      <Text style={styles.qrButtonText}>Xem mã QR</Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               )}
 

@@ -13,6 +13,8 @@ import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import ListingDetailScreen from './src/screens/ListingDetailScreen';
 import CreateListingScreen from './src/screens/CreateListingScreen';
+import CreateBatteryListingScreen from './src/screens/CreateBatteryListingScreen';
+import CompareListingsScreen from './src/screens/CompareListingsScreen';
 import EditListingScreen from './src/screens/EditListingScreen';
 import OrderDetailScreen from './src/screens/OrderDetailScreen';
 import SellerProfileScreen from './src/screens/SellerProfileScreen';
@@ -65,6 +67,8 @@ export default function App() {
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="ListingDetail" component={ListingDetailScreen} />
           <Stack.Screen name="CreateListing" component={CreateListingScreen} />
+          <Stack.Screen name="CreateBatteryListing" component={CreateBatteryListingScreen} />
+          <Stack.Screen name="CompareListings" component={CompareListingsScreen} />
           <Stack.Screen name="EditListing" component={EditListingScreen} />
           <Stack.Screen name="OrderDetail" component={OrderDetailScreen} />
           <Stack.Screen name="SellerProfile" component={SellerProfileScreen} />

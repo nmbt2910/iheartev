@@ -65,12 +65,12 @@ export const useTokenChecker = () => {
           countdownRef.current = null;
         }
 
-        // Explicitly clear token from AsyncStorage before signing out
+        // Explicitly clear all data from AsyncStorage before signing out
         try {
-          await AsyncStorage.multiRemove(['token', 'role']);
-          console.log('[Token Checker] Token cleared from AsyncStorage');
+          await AsyncStorage.clear();
+          console.log('[Token Checker] All AsyncStorage data cleared');
         } catch (storageError) {
-          console.error('[Token Checker] Error clearing token from AsyncStorage:', storageError);
+          console.error('[Token Checker] Error clearing AsyncStorage:', storageError);
         }
 
         // Sign out (also clears state)

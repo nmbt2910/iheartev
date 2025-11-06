@@ -36,8 +36,8 @@ export const authService = {
     } catch (error) {
       // Both 401 and 403 indicate expired/invalid token
       if (error.response?.status === 401 || error.response?.status === 403) {
-        // Token is invalid/expired - clear from storage
-        await AsyncStorage.multiRemove(['token', 'role']);
+        // Token is invalid/expired - clear all storage
+        await AsyncStorage.clear();
         throw { ...error, sessionExpired: true };
       }
       throw error;

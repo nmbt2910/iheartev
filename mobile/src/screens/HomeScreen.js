@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Alert, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, RefreshControl, Alert, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
@@ -22,6 +22,10 @@ export default function HomeScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showListingTypeModal, setShowListingTypeModal] = useState(false);
+  const [selectedType, setSelectedType] = useState('ALL'); // ALL, EV, BATTERY
+  const [sortBy, setSortBy] = useState('newest'); // newest, oldest, priceLow, priceHigh, yearNew, yearOld
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const favorites = useFavorites((state) => state.favorites);
   const { loadFavoritesForListings, toggleFavorite } = useFavorites();
   
@@ -43,30 +47,77 @@ export default function HomeScreen({ navigation }) {
     return () => clearTimeout(timeoutId);
   }, [query]);
 
-  const loadListings = async () => {
+  const [allListings, setAllListings] = useState([]); // Store all listings for client-side filtering/sorting
+
+  // Memoized sorting function
+  const sortListings = useCallback((listings, sortOption) => {
+    const sorted = [...listings];
+    switch (sortOption) {
+      case 'newest':
+        return sorted.sort((a, b) => {
+          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bTime - aTime;
+        });
+      case 'oldest':
+        return sorted.sort((a, b) => {
+          const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return aTime - bTime;
+        });
+      case 'priceLow':
+        return sorted.sort((a, b) => (a.price || 0) - (b.price || 0));
+      case 'priceHigh':
+        return sorted.sort((a, b) => (b.price || 0) - (a.price || 0));
+      case 'yearNew':
+        return sorted.sort((a, b) => (b.year || 0) - (a.year || 0));
+      case 'yearOld':
+        return sorted.sort((a, b) => (a.year || 0) - (b.year || 0));
+      default:
+        return sorted;
+    }
+  }, []);
+
+  // Memoized filtered and sorted listings
+  const filteredAndSortedListings = useMemo(() => {
+    let filtered = allListings;
+    
+    // Filter by type
+    if (selectedType !== 'ALL') {
+      filtered = filtered.filter(l => l.type === selectedType);
+    }
+    
+    // Sort listings
+    return sortListings(filtered, sortBy);
+  }, [allListings, selectedType, sortBy, sortListings]);
+
+  // Update items when filtered/sorted listings change
+  useEffect(() => {
+    setItems(filteredAndSortedListings);
+  }, [filteredAndSortedListings]);
+
+  const loadListings = useCallback(async () => {
     setLoading(true);
     try {
       const params = {
         page: 0,
-        size: 20,
+        size: 50,
         ...(searchQuery && { brand: searchQuery }),
-        // Only include filters if they were explicitly set by the user
         ...(filtersApplied && minYear !== null && { minYear }),
         ...(filtersApplied && maxPrice !== null && { maxPrice }),
         ...(filtersApplied && minCapacity !== null && { minCapacity }),
       };
       const res = await listingService.getListings(params);
       const listings = res.content || [];
-      setItems(listings);
       
-      // Load favorite status asynchronously after setting items for faster UI update
-      // Use batch loading to avoid multiple API calls
+      setAllListings(listings);
+      
+      // Load favorite status asynchronously - don't block UI
       if (isAuthenticated && token && listings.length > 0) {
         const listingIds = listings.map(l => l.id).filter(Boolean);
         if (listingIds.length > 0) {
-          // Don't await - let it load in background for better perceived performance
+          // Fire and forget - don't await
           loadFavoritesForListings(listingIds).catch((error) => {
-            // Silently handle favorite check errors (user might not be authenticated yet)
             if (error.response?.status !== 401 && error.response?.status !== 403) {
               console.error('Error loading favorites:', error);
             }
@@ -84,24 +135,44 @@ export default function HomeScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchQuery, filtersApplied, minYear, maxPrice, minCapacity, isAuthenticated, token, loadFavoritesForListings]);
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadListings();
     setRefreshing(false);
-  };
+  }, [loadListings]);
 
-  // Load listings when search query or filters change
+  // Optimized handlers for instant UI response
+  const handleSortMenuToggle = useCallback(() => {
+    setShowSortMenu(prev => !prev);
+    setShowFilters(false);
+  }, []);
+
+  const handleFilterToggle = useCallback(() => {
+    setShowFilters(prev => !prev);
+    setShowSortMenu(false);
+  }, []);
+
+  const handleSortSelect = useCallback((key) => {
+    setSortBy(key);
+    setShowSortMenu(false);
+  }, []);
+
+  const handleTypeFilterSelect = useCallback((type) => {
+    setSelectedType(type);
+  }, []);
+
+  // Load listings when search query or filters change (not type/sort - those are client-side)
   useEffect(() => { 
     loadListings(); 
-  }, [searchQuery, filtersApplied]);
+  }, [searchQuery, filtersApplied, loadListings]);
 
   // Reload listings when screen comes into focus to show new listings
   useFocusEffect(
     React.useCallback(() => {
       loadListings();
-    }, [searchQuery, filtersApplied])
+    }, [loadListings])
   );
 
   // Don't reload auth state on mount - it's already loaded by App.js
@@ -214,16 +285,116 @@ export default function HomeScreen({ navigation }) {
           </View>
         </View>
 
-        <TouchableOpacity 
-          onPress={() => setShowFilters(!showFilters)} 
-          style={styles.filterToggle}
-          activeOpacity={0.7}
-        >
-          <Icon name={showFilters ? "chevron-up" : "filter"} size={20} color="#6200ee" />
-          <Text style={styles.filterToggleText}>
-            {showFilters ? 'Ẩn bộ lọc' : 'Hiện bộ lọc'}
-          </Text>
-        </TouchableOpacity>
+        {/* Type Filter Bar */}
+        <View style={styles.typeFilterContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.typeFilterScrollContent}
+          >
+            {[
+              { key: 'ALL', label: 'Tất cả', icon: 'view-grid' },
+              { key: 'EV', label: 'Xe điện', icon: 'car-electric' },
+              { key: 'BATTERY', label: 'Pin điện', icon: 'battery-high' },
+            ].map((filter) => (
+              <TouchableOpacity
+                key={filter.key}
+                style={[
+                  styles.typeFilterButton,
+                  selectedType === filter.key && styles.typeFilterButtonActive
+                ]}
+                onPress={() => handleTypeFilterSelect(filter.key)}
+                activeOpacity={0.7}
+              >
+                <Icon 
+                  name={filter.icon} 
+                  size={18} 
+                  color={selectedType === filter.key ? 'white' : '#6200ee'} 
+                />
+                <Text
+                  style={[
+                    styles.typeFilterButtonText,
+                    selectedType === filter.key && styles.typeFilterButtonTextActive
+                  ]}
+                >
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Sort and Filter Controls */}
+        <View style={styles.controlsContainer}>
+          <TouchableOpacity 
+            onPress={handleSortMenuToggle}
+            style={styles.sortButton}
+            activeOpacity={0.7}
+          >
+            <Icon name="sort" size={18} color="#6200ee" />
+            <Text style={styles.sortButtonText}>
+              {sortBy === 'newest' ? 'Mới nhất' :
+               sortBy === 'oldest' ? 'Cũ nhất' :
+               sortBy === 'priceLow' ? 'Giá: Thấp → Cao' :
+               sortBy === 'priceHigh' ? 'Giá: Cao → Thấp' :
+               sortBy === 'yearNew' ? 'Năm: Mới → Cũ' :
+               sortBy === 'yearOld' ? 'Năm: Cũ → Mới' : 'Sắp xếp'}
+            </Text>
+            <Icon name={showSortMenu ? "chevron-up" : "chevron-down"} size={18} color="#6200ee" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            onPress={handleFilterToggle}
+            style={styles.filterToggle}
+            activeOpacity={0.7}
+          >
+            <Icon name={showFilters ? "chevron-up" : "filter"} size={18} color="#6200ee" />
+            <Text style={styles.filterToggleText}>
+              {showFilters ? 'Ẩn' : 'Lọc'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Sort Menu - Render immediately without blocking */}
+        {showSortMenu && (
+          <View style={styles.sortMenuContainer} removeClippedSubviews={false}>
+            {[
+              { key: 'newest', label: 'Mới nhất', icon: 'clock-outline' },
+              { key: 'oldest', label: 'Cũ nhất', icon: 'clock-outline' },
+              { key: 'priceLow', label: 'Giá: Thấp → Cao', icon: 'arrow-up' },
+              { key: 'priceHigh', label: 'Giá: Cao → Thấp', icon: 'arrow-down' },
+              { key: 'yearNew', label: 'Năm: Mới → Cũ', icon: 'calendar' },
+              { key: 'yearOld', label: 'Năm: Cũ → Mới', icon: 'calendar' },
+            ].map((option) => (
+              <TouchableOpacity
+                key={option.key}
+                style={[
+                  styles.sortOption,
+                  sortBy === option.key && styles.sortOptionActive
+                ]}
+                onPress={() => handleSortSelect(option.key)}
+                activeOpacity={0.7}
+              >
+                <Icon 
+                  name={option.icon} 
+                  size={18} 
+                  color={sortBy === option.key ? 'white' : '#666'} 
+                />
+                <Text
+                  style={[
+                    styles.sortOptionText,
+                    sortBy === option.key && styles.sortOptionTextActive
+                  ]}
+                >
+                  {option.label}
+                </Text>
+                {sortBy === option.key && (
+                  <Icon name="check" size={18} color="white" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {showFilters && (
           <View style={styles.filterContainer}>
@@ -319,7 +490,8 @@ export default function HomeScreen({ navigation }) {
 
         <View style={styles.resultsHeader}>
           <Text style={styles.resultsCount}>
-            {loading && !refreshing ? 'Đang tải...' : loading && searchQuery ? 'Đang tìm kiếm...' : `Tìm thấy ${items.length} xe`}
+            {loading && !refreshing ? 'Đang tải...' : loading && searchQuery ? 'Đang tìm kiếm...' : 
+             `Tìm thấy ${items.length} ${selectedType === 'ALL' ? 'mục' : selectedType === 'EV' ? 'xe điện' : 'pin điện'}`}
           </Text>
         </View>
 
@@ -330,8 +502,12 @@ export default function HomeScreen({ navigation }) {
           </View>
         ) : items.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Icon name="car-off" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>Không tìm thấy xe nào</Text>
+            <Icon name={selectedType === 'BATTERY' ? 'battery-off' : 'car-off'} size={64} color="#ccc" />
+            <Text style={styles.emptyText}>
+              {selectedType === 'ALL' ? 'Không tìm thấy mục nào' :
+               selectedType === 'EV' ? 'Không tìm thấy xe điện nào' :
+               'Không tìm thấy pin điện nào'}
+            </Text>
             <Text style={styles.emptySubtext}>Thử thay đổi bộ lọc của bạn</Text>
           </View>
         ) : (
@@ -346,7 +522,11 @@ export default function HomeScreen({ navigation }) {
               >
                 <View style={styles.cardHeader}>
                   <View style={styles.cardHeaderLeft}>
-                    <Icon name="car" size={24} color="#6200ee" />
+                    <Icon 
+                      name={item.type === 'BATTERY' ? 'battery-high' : 'car-electric'} 
+                      size={24} 
+                      color="#6200ee" 
+                    />
                     <View style={styles.cardTitleContainer}>
                       <Text style={styles.cardTitle} numberOfLines={1} ellipsizeMode="tail">
                         {`${item.brand} ${item.model}`}
@@ -354,36 +534,48 @@ export default function HomeScreen({ navigation }) {
                       <Text style={styles.cardSubtitle} numberOfLines={1}>
                         <Icon name="calendar-outline" size={14} color="#666" /> {item.year} • 
                         <Icon name="battery" size={14} color="#666" /> {item.batteryCapacityKWh || '-'} kWh
+                        {item.type === 'BATTERY' && (
+                          <>
+                            {' • '}
+                            <Icon name="battery-high" size={14} color="#ff9800" />
+                            <Text style={styles.typeIndicator}> Pin</Text>
+                          </>
+                        )}
                       </Text>
                     </View>
                   </View>
-                  {isAuthenticated && (
-                    <TouchableOpacity
-                      onPress={async (e) => {
-                        e.stopPropagation();
-                        const wasFavorite = favorited;
-                        try {
-                          // toggleFavorite already updates the store state
-                          await toggleFavorite(item.id);
-                        } catch (error) {
-                          if (!error.sessionExpired) {
-                            console.error('Error toggling favorite:', error);
+                  <View style={styles.cardHeaderRight}>
+                    {/* Verified Badge - positioned in top right */}
+                    <View style={styles.verifiedBadge}>
+                      <Icon name="check-circle" size={12} color="#4caf50" />
+                      <Text style={styles.verifiedBadgeText}>Đã kiểm định</Text>
+                    </View>
+                    {isAuthenticated && (
+                      <TouchableOpacity
+                        onPress={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await toggleFavorite(item.id);
+                          } catch (error) {
+                            if (!error.sessionExpired) {
+                              console.error('Error toggling favorite:', error);
+                            }
                           }
-                        }
-                      }}
-                      activeOpacity={0.6}
-                      style={[styles.favoriteIconTouchable, favorited && styles.favoriteIconTouchableActive]}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <View style={[styles.favoriteIconContainer, favorited && styles.favoriteIconContainerActive]}>
-                        <Icon 
-                          name={favorited ? "heart" : "heart-outline"} 
-                          size={20} 
-                          color={favorited ? "#ffffff" : "#999"}
-                        />
-                      </View>
-                    </TouchableOpacity>
-                  )}
+                        }}
+                        activeOpacity={0.6}
+                        style={[styles.favoriteIconTouchable, favorited && styles.favoriteIconTouchableActive]}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        <View style={[styles.favoriteIconContainer, favorited && styles.favoriteIconContainerActive]}>
+                          <Icon 
+                            name={favorited ? "heart" : "heart-outline"} 
+                            size={20} 
+                            color={favorited ? "#ffffff" : "#999"}
+                          />
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
                 <View style={styles.cardBody}>
                   <View style={styles.priceContainer}>
@@ -415,11 +607,66 @@ export default function HomeScreen({ navigation }) {
       </TouchableOpacity>
       <TouchableOpacity
         style={[styles.fab, styles.fabRight]}
-        onPress={() => navigation.navigate('CreateListing')}
+        onPress={() => setShowListingTypeModal(true)}
         activeOpacity={0.8}
       >
         <Icon name="plus" size={24} color="white" />
       </TouchableOpacity>
+
+      {/* Listing Type Selection Modal */}
+      <Modal
+        visible={showListingTypeModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowListingTypeModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Chọn loại tin đăng</Text>
+              <TouchableOpacity onPress={() => setShowListingTypeModal(false)}>
+                <Icon name="close" size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            
+            <TouchableOpacity
+              style={styles.listingTypeOption}
+              onPress={() => {
+                setShowListingTypeModal(false);
+                navigation.navigate('CreateListing');
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.listingTypeIconContainer}>
+                <Icon name="car-electric" size={32} color="#6200ee" />
+              </View>
+              <View style={styles.listingTypeContent}>
+                <Text style={styles.listingTypeTitle}>Bán xe điện</Text>
+                <Text style={styles.listingTypeSubtitle}>Đăng tin bán xe điện đã qua sử dụng</Text>
+              </View>
+              <Icon name="chevron-right" size={24} color="#ccc" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.listingTypeOption, styles.listingTypeOptionLast]}
+              onPress={() => {
+                setShowListingTypeModal(false);
+                navigation.navigate('CreateBatteryListing');
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.listingTypeIconContainer}>
+                <Icon name="battery-high" size={32} color="#6200ee" />
+              </View>
+              <View style={styles.listingTypeContent}>
+                <Text style={styles.listingTypeTitle}>Bán pin điện</Text>
+                <Text style={styles.listingTypeSubtitle}>Đăng tin bán pin EV đã qua sử dụng</Text>
+              </View>
+              <Icon name="chevron-right" size={24} color="#ccc" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       </View>
     </SafeAreaView>
   );
@@ -519,25 +766,20 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   filterToggle: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginTop: 12,
-    paddingVertical: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 16,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#6200ee',
-    elevation: 0,
-    shadowColor: '#6200ee',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    gap: 6,
   },
   filterToggleText: {
-    marginLeft: 8,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#6200ee',
   },
@@ -657,9 +899,15 @@ const styles = StyleSheet.create({
   cardHeader: {
     marginBottom: 12,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     width: '100%',
+  },
+  cardHeaderRight: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 8,
+    flexShrink: 0,
   },
   favoriteIconTouchable: {
     padding: 0,
@@ -775,5 +1023,188 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
     fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    width: '85%',
+    maxWidth: 400,
+    padding: 0,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  listingTypeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  listingTypeOptionLast: {
+    borderBottomWidth: 0,
+  },
+  listingTypeIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#f3e5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  listingTypeContent: {
+    flex: 1,
+  },
+  listingTypeTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  listingTypeSubtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  typeFilterContainer: {
+    backgroundColor: 'white',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+  },
+  typeFilterScrollContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  typeFilterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    marginRight: 8,
+    gap: 6,
+  },
+  typeFilterButtonActive: {
+    backgroundColor: '#6200ee',
+    borderColor: '#6200ee',
+  },
+  typeFilterButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  typeFilterButtonTextActive: {
+    color: 'white',
+  },
+  controlsContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 8,
+  },
+  sortButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#6200ee',
+    gap: 8,
+  },
+  sortButtonText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6200ee',
+  },
+  sortMenuContainer: {
+    backgroundColor: 'white',
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    overflow: 'hidden',
+  },
+  sortOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+    gap: 12,
+  },
+  sortOptionActive: {
+    backgroundColor: '#6200ee',
+  },
+  sortOptionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#666',
+  },
+  sortOptionTextActive: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  verifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e8f5e9',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 10,
+    gap: 3,
+    alignSelf: 'flex-end',
+  },
+  verifiedBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#4caf50',
+  },
+  typeIndicator: {
+    fontSize: 14,
+    color: '#ff9800',
+    fontWeight: '600',
   },
 });

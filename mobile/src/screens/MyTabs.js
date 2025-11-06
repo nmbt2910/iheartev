@@ -46,6 +46,7 @@ function MyListings({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [listingImages, setListingImages] = useState({});
   const [selectedStatus, setSelectedStatus] = useState('ALL');
+  const [selectedType, setSelectedType] = useState('ALL'); // ALL, EV, BATTERY
 
   useAuthGuard(true);
 
@@ -191,26 +192,35 @@ function MyListings({ navigation }) {
     setRefreshing(false);
   };
 
-  const filterByStatus = (status) => {
+  const filterByStatus = (status, type = selectedType) => {
     let filtered = [];
     
+    // First filter by type
+    let typeFiltered = allItems;
+    if (type === 'EV') {
+      typeFiltered = allItems.filter(item => item.type === 'EV');
+    } else if (type === 'BATTERY') {
+      typeFiltered = allItems.filter(item => item.type === 'BATTERY');
+    }
+    
+    // Then filter by status
     if (status === 'ALL') {
-      filtered = allItems;
+      filtered = typeFiltered;
     } else if (status === 'PAID') {
       // Filter for listings with paid orders
-      filtered = allItems.filter(item => {
+      filtered = typeFiltered.filter(item => {
         const order = getOrderForListing(item.id);
         return order && order.status === 'PAID';
       });
     } else if (status === 'PENDING') {
       // Include both PENDING and REJECTED listings in "Chờ duyệt" section
       // (REJECTED listings can be edited and resubmitted)
-      filtered = allItems.filter(item => {
+      filtered = typeFiltered.filter(item => {
         const statusUpper = item.status?.toUpperCase();
         return statusUpper === 'PENDING' || statusUpper === 'REJECTED';
       });
     } else {
-      filtered = allItems.filter(item => {
+      filtered = typeFiltered.filter(item => {
         const statusUpper = item.status?.toUpperCase();
         return statusUpper === status.toUpperCase();
       });
@@ -237,10 +247,10 @@ function MyListings({ navigation }) {
 
   useEffect(() => {
     if (allItems.length > 0) {
-      filterByStatus(selectedStatus);
+      filterByStatus(selectedStatus, selectedType);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allItems, selectedStatus]);
+  }, [allItems, selectedStatus, selectedType]);
 
   if (loading && !refreshing) {
     return (
@@ -265,7 +275,50 @@ function MyListings({ navigation }) {
 
   return (
     <ScreenWrapper title="Tin của tôi" navigation={navigation}>
-      {/* Filter Bar */}
+      {/* Type Filter Bar */}
+      {allItems.length > 0 && (
+        <View style={styles.typeFilterContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {[
+              { key: 'ALL', label: 'Tất cả', icon: 'view-grid' },
+              { key: 'EV', label: 'Xe điện', icon: 'car-electric' },
+              { key: 'BATTERY', label: 'Pin điện', icon: 'battery-high' },
+            ].map((filter) => (
+              <TouchableOpacity
+                key={filter.key}
+                style={[
+                  styles.typeFilterButton,
+                  selectedType === filter.key && styles.typeFilterButtonActive
+                ]}
+                onPress={() => {
+                  setSelectedType(filter.key);
+                }}
+                activeOpacity={0.7}
+              >
+                <Icon 
+                  name={filter.icon} 
+                  size={18} 
+                  color={selectedType === filter.key ? 'white' : '#6200ee'} 
+                />
+                <Text
+                  style={[
+                    styles.typeFilterButtonText,
+                    selectedType === filter.key && styles.typeFilterButtonTextActive
+                  ]}
+                >
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+      
+      {/* Status Filter Bar */}
       {allItems.length > 0 && (
         <View style={styles.filterContainer}>
           <ScrollView 
@@ -685,9 +738,13 @@ function MyOrders({ navigation }) {
 function MyFavorites({ navigation }) {
   const { isAuthenticated, token } = useAuth();
   const [items, setItems] = useState([]);
+  const [allItems, setAllItems] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [removingFavoriteId, setRemovingFavoriteId] = useState(null);
+  const [selectedType, setSelectedType] = useState('ALL'); // ALL, EV, BATTERY
+  const [selectedForCompare, setSelectedForCompare] = useState(new Set()); // Set of listing IDs
+  const [compareMode, setCompareMode] = useState(false);
   const favorites = useFavorites((state) => state.favorites);
   const { loadFavoritesForListings, removeFavorite } = useFavorites();
 
@@ -699,7 +756,10 @@ function MyFavorites({ navigation }) {
       setLoading(true);
       const res = await favoriteService.getMyFavorites();
       const favoriteList = res || [];
-      setItems(favoriteList);
+      setAllItems(favoriteList);
+      
+      // Filter by type
+      filterByType(selectedType, favoriteList);
       
       // Update favorite store with loaded favorites
       if (favoriteList.length > 0) {
@@ -718,6 +778,25 @@ function MyFavorites({ navigation }) {
       setLoading(false);
     }
   };
+
+  const filterByType = (type, itemsList = allItems) => {
+    let filtered = itemsList;
+    
+    if (type === 'EV') {
+      filtered = itemsList.filter(item => item.listing?.type === 'EV');
+    } else if (type === 'BATTERY') {
+      filtered = itemsList.filter(item => item.listing?.type === 'BATTERY');
+    }
+    
+    setItems(filtered);
+  };
+
+  useEffect(() => {
+    if (allItems.length > 0) {
+      filterByType(selectedType);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedType]);
 
   useEffect(() => {
     if (isAuthenticated && token) {
@@ -742,7 +821,7 @@ function MyFavorites({ navigation }) {
 
   const handleRemoveFavorite = async (favoriteId, listingId, event) => {
     // Prevent navigation to listing detail
-    event.stopPropagation();
+    if (event) event.stopPropagation();
     
     if (!listingId) return;
     
@@ -750,7 +829,15 @@ function MyFavorites({ navigation }) {
       setRemovingFavoriteId(favoriteId);
       await removeFavorite(listingId);
       // Remove from local state
-      setItems(prevItems => prevItems.filter(item => item.id !== favoriteId));
+      const updatedItems = allItems.filter(item => item.id !== favoriteId);
+      setAllItems(updatedItems);
+      filterByType(selectedType, updatedItems);
+      // Remove from compare selection if selected
+      setSelectedForCompare(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(listingId);
+        return newSet;
+      });
     } catch (error) {
       if (error.sessionExpired) {
         Alert.alert('Session Expired', 'Session expired. Please log in again.', [
@@ -762,6 +849,83 @@ function MyFavorites({ navigation }) {
     } finally {
       setRemovingFavoriteId(null);
     }
+  };
+
+  const toggleCompareSelection = (listingId) => {
+    // Find the listing being toggled
+    const listingToToggle = items.find(item => item.listing?.id === listingId)?.listing;
+    if (!listingToToggle) return;
+
+    setSelectedForCompare(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(listingId)) {
+        // Remove from selection
+        newSet.delete(listingId);
+      } else {
+        // Check if we can add this item
+        if (newSet.size >= 5) {
+          Alert.alert('Thông báo', 'Bạn chỉ có thể so sánh tối đa 5 mục');
+          return prev;
+        }
+
+        // If there are already selected items, check if the type matches
+        if (newSet.size > 0) {
+          // Get the first selected listing to check its type
+          const firstSelectedId = Array.from(newSet)[0];
+          const firstSelectedListing = items.find(item => item.listing?.id === firstSelectedId)?.listing;
+          
+          if (firstSelectedListing) {
+            const firstType = firstSelectedListing.type;
+            const newType = listingToToggle.type;
+            
+            // Prevent comparing different types
+            if (firstType !== newType) {
+              const firstTypeLabel = firstType === 'BATTERY' ? 'pin điện' : 'xe điện';
+              const newTypeLabel = newType === 'BATTERY' ? 'pin điện' : 'xe điện';
+              Alert.alert(
+                'Không thể so sánh',
+                `Bạn không thể so sánh ${firstTypeLabel} với ${newTypeLabel}. Vui lòng chỉ chọn các mục cùng loại để so sánh.`,
+                [{ text: 'Đồng ý' }]
+              );
+              return prev;
+            }
+          }
+        }
+
+        // Add to selection if all checks pass
+        newSet.add(listingId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleCompare = () => {
+    if (selectedForCompare.size < 2) {
+      Alert.alert('Thông báo', 'Vui lòng chọn ít nhất 2 mục để so sánh');
+      return;
+    }
+    
+    const selectedListings = items.filter(item => 
+      item.listing?.id && selectedForCompare.has(item.listing.id)
+    ).map(item => item.listing);
+    
+    // Double-check that all selected listings are of the same type
+    const types = new Set(selectedListings.map(l => l.type).filter(Boolean));
+    if (types.size > 1) {
+      Alert.alert(
+        'Lỗi',
+        'Không thể so sánh các mục khác loại. Vui lòng chỉ chọn xe điện hoặc pin điện để so sánh.',
+        [{ text: 'Đồng ý' }]
+      );
+      return;
+    }
+    
+    navigation.navigate('CompareListings', { listings: selectedListings });
+  };
+
+  const clearCompareSelection = () => {
+    setSelectedForCompare(new Set());
+    setCompareMode(false);
   };
 
   if (loading && !refreshing) {
@@ -777,6 +941,98 @@ function MyFavorites({ navigation }) {
 
   return (
     <ScreenWrapper title="Yêu thích" navigation={navigation}>
+      {/* Type Filter Bar */}
+      {allItems.length > 0 && (
+        <View style={styles.typeFilterContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {[
+              { key: 'ALL', label: 'Tất cả', icon: 'view-grid' },
+              { key: 'EV', label: 'Xe điện', icon: 'car-electric' },
+              { key: 'BATTERY', label: 'Pin điện', icon: 'battery-high' },
+            ].map((filter) => (
+              <TouchableOpacity
+                key={filter.key}
+                style={[
+                  styles.typeFilterButton,
+                  selectedType === filter.key && styles.typeFilterButtonActive
+                ]}
+                onPress={() => {
+                  setSelectedType(filter.key);
+                }}
+                activeOpacity={0.7}
+              >
+                <Icon 
+                  name={filter.icon} 
+                  size={18} 
+                  color={selectedType === filter.key ? 'white' : '#6200ee'} 
+                />
+                <Text
+                  style={[
+                    styles.typeFilterButtonText,
+                    selectedType === filter.key && styles.typeFilterButtonTextActive
+                  ]}
+                >
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Compare Mode Controls */}
+      {items.length > 0 && (
+        <View style={styles.compareControlsContainer}>
+          <TouchableOpacity
+            style={[styles.compareModeButton, compareMode && styles.compareModeButtonActive]}
+            onPress={() => {
+              setCompareMode(!compareMode);
+              if (!compareMode) {
+                setSelectedForCompare(new Set());
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <Icon 
+              name={compareMode ? "checkbox-marked-circle" : "checkbox-blank-circle-outline"} 
+              size={20} 
+              color={compareMode ? "white" : "#6200ee"} 
+            />
+            <Text style={[styles.compareModeButtonText, compareMode && styles.compareModeButtonTextActive]}>
+              So sánh
+            </Text>
+          </TouchableOpacity>
+          
+          {compareMode && selectedForCompare.size > 0 && (
+            <View style={styles.compareActionsContainer}>
+              <Text style={styles.compareCountText}>
+                Đã chọn: {selectedForCompare.size}/5
+              </Text>
+              <TouchableOpacity
+                style={[styles.compareButton, selectedForCompare.size < 2 && styles.compareButtonDisabled]}
+                onPress={handleCompare}
+                disabled={selectedForCompare.size < 2}
+                activeOpacity={0.7}
+              >
+                <Icon name="compare-horizontal" size={18} color="white" />
+                <Text style={styles.compareButtonText}>So sánh ({selectedForCompare.size})</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.clearCompareButton}
+                onPress={clearCompareSelection}
+                activeOpacity={0.7}
+              >
+                <Icon name="close" size={18} color="#6200ee" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
+
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -785,39 +1041,110 @@ function MyFavorites({ navigation }) {
         {items.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Icon name="heart-outline" size={64} color="#ccc" />
-            <Text style={styles.emptyText}>Chưa có xe yêu thích nào</Text>
+            <Text style={styles.emptyText}>
+              {selectedType === 'ALL' ? 'Chưa có yêu thích nào' : 
+               selectedType === 'EV' ? 'Chưa có xe điện yêu thích nào' : 
+               'Chưa có pin điện yêu thích nào'}
+            </Text>
           </View>
         ) : (
-          items.map(it => (
-            <TouchableOpacity
-              key={it.id}
-              style={styles.card}
-              activeOpacity={0.7}
-              onPress={() => navigation.navigate('ListingDetail', { id: it.listing?.id })}
-            >
+          items.map(it => {
+            const listingId = it.listing?.id;
+            const isSelected = listingId && selectedForCompare.has(listingId);
+            
+            // Check if this item can be selected (same type as already selected items)
+            let canSelect = true;
+            if (compareMode && selectedForCompare.size > 0 && !isSelected) {
+              const firstSelectedId = Array.from(selectedForCompare)[0];
+              const firstSelectedListing = items.find(item => item.listing?.id === firstSelectedId)?.listing;
+              if (firstSelectedListing && it.listing) {
+                canSelect = firstSelectedListing.type === it.listing.type;
+              }
+            }
+            
+            return (
               <TouchableOpacity
-                style={styles.cardIconContainer}
+                key={it.id}
+                style={[
+                  styles.card, 
+                  compareMode && isSelected && styles.cardSelected,
+                  compareMode && !canSelect && !isSelected && styles.cardDisabled
+                ]}
                 activeOpacity={0.7}
-                onPress={(e) => handleRemoveFavorite(it.id, it.listing?.id, e)}
-                disabled={removingFavoriteId === it.id}
+                onPress={() => {
+                  if (compareMode) {
+                    if (canSelect || isSelected) {
+                      toggleCompareSelection(listingId);
+                    } else {
+                      const firstSelectedId = Array.from(selectedForCompare)[0];
+                      const firstSelectedListing = items.find(item => item.listing?.id === firstSelectedId)?.listing;
+                      const firstTypeLabel = firstSelectedListing?.type === 'BATTERY' ? 'pin điện' : 'xe điện';
+                      const currentTypeLabel = it.listing?.type === 'BATTERY' ? 'pin điện' : 'xe điện';
+                      Alert.alert(
+                        'Không thể so sánh',
+                        `Bạn đã chọn ${firstTypeLabel}. Không thể so sánh với ${currentTypeLabel}. Vui lòng chỉ chọn các mục cùng loại.`,
+                        [{ text: 'Đồng ý' }]
+                      );
+                    }
+                  } else {
+                    navigation.navigate('ListingDetail', { id: listingId });
+                  }
+                }}
               >
-                {removingFavoriteId === it.id ? (
-                  <ActivityIndicator size="small" color="#e91e63" />
-                ) : (
-                  <Icon name="heart" size={24} color="#e91e63" />
+                {compareMode && (
+                  <TouchableOpacity
+                    style={styles.checkboxContainer}
+                    onPress={() => toggleCompareSelection(listingId)}
+                    activeOpacity={0.7}
+                  >
+                    <Icon 
+                      name={isSelected ? "checkbox-marked-circle" : "checkbox-blank-circle-outline"} 
+                      size={28} 
+                      color={isSelected ? "#6200ee" : "#ccc"} 
+                    />
+                  </TouchableOpacity>
+                )}
+                
+                <TouchableOpacity
+                  style={styles.cardIconContainer}
+                  activeOpacity={0.7}
+                  onPress={(e) => handleRemoveFavorite(it.id, listingId, e)}
+                  disabled={removingFavoriteId === it.id}
+                >
+                  {removingFavoriteId === it.id ? (
+                    <ActivityIndicator size="small" color="#e91e63" />
+                  ) : (
+                    <Icon name="heart" size={24} color="#e91e63" />
+                  )}
+                </TouchableOpacity>
+                <View style={styles.cardContent}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={styles.cardTitle}>
+                      {it.listing?.brand} {it.listing?.model || 'N/A'}
+                    </Text>
+                    {it.listing?.type && (
+                      <View style={[styles.typeBadge, it.listing.type === 'BATTERY' && styles.typeBadgeBattery]}>
+                        <Icon 
+                          name={it.listing.type === 'BATTERY' ? 'battery-high' : 'car-electric'} 
+                          size={12} 
+                          color="white" 
+                        />
+                        <Text style={styles.typeBadgeText}>
+                          {it.listing.type === 'BATTERY' ? 'Pin' : 'Xe'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.cardSubtitle}>
+                    {it.listing?.year} • {it.listing?.price ? formatVND(it.listing.price) : 'N/A'}
+                  </Text>
+                </View>
+                {!compareMode && (
+                  <Icon name="chevron-right" size={20} color="#ccc" />
                 )}
               </TouchableOpacity>
-              <View style={styles.cardContent}>
-                <Text style={styles.cardTitle}>
-                  {it.listing?.brand} {it.listing?.model || 'N/A'}
-                </Text>
-                <Text style={styles.cardSubtitle}>
-                  {it.listing?.year} • {it.listing?.price ? formatVND(it.listing.price) : 'N/A'}
-                </Text>
-              </View>
-              <Icon name="chevron-right" size={20} color="#ccc" />
-            </TouchableOpacity>
-          ))
+            );
+          })
         )}
       </ScrollView>
     </ScreenWrapper>
@@ -1324,5 +1651,141 @@ const styles = StyleSheet.create({
   },
   orderTabTextActive: {
     color: 'white',
+  },
+  typeFilterContainer: {
+    backgroundColor: 'white',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  typeFilterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f5f5f5',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    marginRight: 8,
+    gap: 6,
+  },
+  typeFilterButtonActive: {
+    backgroundColor: '#6200ee',
+    borderColor: '#6200ee',
+  },
+  typeFilterButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  typeFilterButtonTextActive: {
+    color: 'white',
+  },
+  compareControlsContainer: {
+    backgroundColor: 'white',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  compareModeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#f5f5f5',
+    borderWidth: 2,
+    borderColor: '#6200ee',
+    gap: 8,
+    alignSelf: 'flex-start',
+  },
+  compareModeButtonActive: {
+    backgroundColor: '#6200ee',
+    borderColor: '#6200ee',
+  },
+  compareModeButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6200ee',
+  },
+  compareModeButtonTextActive: {
+    color: 'white',
+  },
+  compareActionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    gap: 12,
+  },
+  compareCountText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+    flex: 1,
+  },
+  compareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6200ee',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    gap: 6,
+  },
+  compareButtonDisabled: {
+    opacity: 0.5,
+  },
+  compareButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  clearCompareButton: {
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: '#f5f5f5',
+  },
+  checkboxContainer: {
+    padding: 8,
+    marginRight: 8,
+  },
+  cardSelected: {
+    borderWidth: 2,
+    borderColor: '#6200ee',
+    backgroundColor: '#f3e5f5',
+  },
+  cardDisabled: {
+    opacity: 0.5,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+    gap: 8,
+  },
+  typeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6200ee',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  typeBadgeBattery: {
+    backgroundColor: '#ff9800',
+  },
+  typeBadgeText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });
